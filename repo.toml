@@ -1,0 +1,12 @@
+# bar: workspace identity descriptor (kind/lang/role mirror workspace.toml).
+[repo]
+name = "bar"
+kind = "plugin"
+lang = "lua/ts"
+role = "independent plugin: unified workspace bar, tabs, and statusline presentation"
+owner = "bitty-plugins"
+docs = "bitty-plugins-docs"
+
+[contracts.consumes]
+manifest-v1 = "OQ-012 plugin-platform-rfc"
+plugin-api-v1 = "ADR-0009 Lua Surface"

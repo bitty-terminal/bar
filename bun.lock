@@ -1,0 +1,20 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bitty-terminal.bar",
+      "devDependencies": {
+        "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#e1723b60cc94d3abc18821c9e6b14c6c88f33add",
+        "luaparse": "0.3.1",
+      },
+    },
+  },
+  "packages": {
+    "bitty-plugin-sdk": ["bitty-plugin-sdk@github:bitty-terminal/bitty-plugin-sdk#e1723b6", { "dependencies": { "smol-toml": "1.8.0" }, "bin": { "bitty-plugin-lint": "./src/cli.ts" } }, "bitty-terminal-bitty-plugin-sdk-e1723b6", "sha512-qa5nyJ+TDozDMQHHJz4rXXgMdE7FzYGLlvH6Hol4To4walPhQtUn4KUkFAMVldCIZWurfBCigN7FkJE5SuN5bA=="],
+
+    "luaparse": ["luaparse@0.3.1", "", { "bin": { "luaparse": "bin/luaparse" } }, "sha512-b21h2bFEbtGXmVqguHogbyrMAA0wOHyp9u/rx+w6Yc9pW1t9YjhGUsp87lYcp7pFRqSWN/PhFkrdIqKEUzRjjQ=="],
+
+    "smol-toml": ["smol-toml@1.8.0", "", {}, "sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ=="],
+  }
+}

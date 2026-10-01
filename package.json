@@ -1,0 +1,12 @@
+{
+  "name": "bitty-terminal.bar",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.",
+  "packageManager": "bun@1.4.2",
+  "devDependencies": {
+    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#e1723b60cc94d3abc18821c9e6b14c6c88f33add",
+    "luaparse": "0.3.1"
+  }
+}
