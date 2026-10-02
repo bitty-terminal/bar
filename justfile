@@ -42,5 +42,11 @@ lua: deps
 lua-control: deps
     @! bunx --bun luaparse@{{luaparse_pin}} --quiet --code 'local ='
 
+# Run the workspace bar behavior and Core-parity tests: `lua/bar/init.lua`
+# executes in a pinned Lua 5.4 VM (wasmoon) against the pinned SDK mock host,
+# which owns every capability, registration, scene, and schema check.
+test: deps
+    bun test
+
 # Aggregate gate run locally and in CI (after `just install`).
-check: manifest lua lua-control
+check: manifest lua lua-control test
