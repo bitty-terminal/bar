@@ -6,7 +6,8 @@
   "description": "Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.",
   "packageManager": "bun@1.4.2",
   "devDependencies": {
-    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#e1723b60cc94d3abc18821c9e6b14c6c88f33add",
-    "luaparse": "0.3.1"
+    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#4f9f1ba7ba85e8a24a192bb5b766402dab84c885",
+    "luaparse": "0.3.1",
+    "wasmoon": "1.16.0"
   }
 }

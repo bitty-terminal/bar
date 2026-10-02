@@ -2,3 +2,4 @@
 node_modules/
 recording/
 .worktrees/
+.carryctx/config.local.toml

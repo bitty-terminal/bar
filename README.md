@@ -2,101 +2,97 @@
 
 Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.
 
-This repository was generated from
-[bitty-plugin-template](https://github.com/bitty-terminal/bitty-plugin-template).
-It is a minimal Bitty plugin package: a static manifest, one Lua entry point,
-and a CI quality gate.
+[ADR-0014](https://github.com/bitty-terminal/bitty-docs/blob/main/docs/decisions/adrs/ADR-0014-workspace-core-presentation-plugins.md)
+keeps Workspace as a Core mechanism and moves every workspace presentation
+into plugins. This plugin's first module is the workspace bar: it renders what
+the retired Core workspaceline drew, over the Plugin API v1 surface only.
 
-> Status: pre-implementation. The Bitty plugin host is still landing, and the
-> entry point below follows the frozen Plugin API v1 generation pipeline
-> (bitty-plugin-sdk #109, re-wired by SDK #118, host parity from bitty #1303
-> as re-wired by bitty #1391: `keymaps`/`tasks`/`services`
-> WIRED, `env` DEFERRED with typed `E_NOT_IMPLEMENTED`,
-> `process.spawn` v1-OUT). `just check` validates the manifest with the
-> authoritative `bitty-plugin-lint` from
-> [bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk)
-> (pinned by commit in `package.json` and `bun.lock`) and parses the Lua entry
-> point, with a fail-closed parser control so the parse cannot silently pass.
-> Entry layout: the package root holds `bitty-plugin.toml` (the discovery
-> unit) and the `lua/` module root (the `require` root). The host resolves the
-> fixed `init.lua` entry as `lua/<module>/init.lua` (or `lua/init.lua`) and
-> executes it once per activation; finding the manifest (discovery) alone does
-> not prove the entry runs (activation), and no package-root forwarder is
-> needed. The template's host-integration gate checks both phases separately.
+> Status: pre-implementation. Behavior is verified against the
+> bitty-plugin-sdk mock host (pinned by commit), not against a released host.
+> Tabs and statusline modules are not implemented yet.
+
+## Workspace bar
+
+- One pill per workspace, `{position}:{name}`, joined by single spaces and
+  followed by ` ({count})`. The active pill carries `*`, bold, and the
+  `accent` theme token. An empty workspace list renders `—` (fail closed).
+- Names are cut to 32 characters (or `name_max_chars`); the whole line is
+  bounded to 1024 UTF-8 bytes, cut on a character boundary.
+- A lone workspace hides the bar unless `show_single = true`.
+- Clicking an inactive pill runs `bitty-terminal.bar:focus { id }`, which
+  queues `bitty.workspace.focus(id)` by stable id. The active pill,
+  separators, the count suffix, unknown or stale ids, and non-integer ids
+  queue nothing.
+- The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
+  event and re-reads settings on `config.reloaded`.
+
+### Settings
+
+Keys live under the plugin namespace (`plugins."bitty-terminal.bar"`); absent
+or invalid values fall back to the default.
+
+| Key              | Type    | Default    | Replaces (retired Core key) | Notes                                   |
+| ---------------- | ------- | ---------- | --------------------------- | --------------------------------------- |
+| `show`           | boolean | `true`     | `workspace.show_bar`        | Live on `config.reloaded`.              |
+| `edge`           | string  | `"bottom"` | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
+| `show_single`    | boolean | `false`    | none (Core always hid it)   | Live on `config.reloaded`.              |
+| `name_max_chars` | integer | `32`       | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+
+`edge` applies on the next plugin generation because `bitty.ui.mount` is valid
+only during activation and v1 has no unmount or move.
+
+### Capabilities
+
+`ui.rich` (mount and update the band), `workspace.read` (`list` and the
+`workspace.*` events), and `workspace.control` (`focus` for clicks). Without
+`workspace.control` the bar still renders and clicks fail closed.
+
+### Known host gaps
+
+Gaps in the current host, not in this plugin:
+
+- The Core host parses `on_click` into the mounted scene but does not yet
+  route band clicks to the bound command, so clicking does nothing on a live
+  host. The mock host is used to exercise the command path.
+- Band painting ignores `fg`, `bg`, and `bold`. The active pill stays
+  identifiable through the `*` mark.
+- Plugin bands reserve no exclusive zone. They overlay the edge content row
+  instead of reflowing the grid the way the Core band did.
+- An empty (hidden) band still takes a stacking index on its edge.
+- Activation is lazy: the plugin activates on its first declared event or
+  command, so `show_single = true` takes effect after the first workspace event.
+- While Core still draws its own workspaceline, set `workspace.show_bar = false`
+  to avoid two bars.
 
 ## Layout
 
-| Path                       | Purpose                                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `bitty-plugin.toml`        | Static manifest: identity, compatibility, capability requests, and lazy triggers.                      |
-| `lua/bar/init.lua`         | Entry point evaluated once per activation; every resource it creates belongs to the plugin generation. |
-| `package.json`             | Pinned dev dependencies: the authoritative `bitty-plugin-lint` (by commit) and `luaparse`.             |
-| `bun.lock`                 | Locked dependency graph installed by `just install`.                                                   |
-| `justfile`                 | Quality gates with pinned tool versions.                                                               |
-| `.github/workflows/ci.yml` | CI gate with a read-only token and SHA-pinned actions.                                                 |
+| Path                          | Purpose                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers. |
+| `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`. |
+| `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.       |
+| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline.                         |
+| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                          |
+| `justfile`                    | Quality gates with pinned tool versions.                                   |
 
 ## Development
 
-Install the pinned dependencies once, then run the same gate CI runs:
-
 ```sh
 just install   # bun install --frozen-lockfile; the only network step
-just check
+just check     # manifest lint, Lua 5.1 grammar parse + control, bun tests
 ```
 
-`just install` materializes `bitty-plugin-lint` (bitty-plugin-sdk, pinned by
-commit in `package.json` and `bun.lock`) and `luaparse`; every gate then runs
-offline. `just manifest` validates `bitty-plugin.toml` with the authoritative
-SDK linter against the accepted contract in bitty-docs
-`docs/specifications/plugin-platform-rfc.md` (file name, identity,
-compatibility, capability closed set, lazy triggers, hard limits). `just lua`
-runs the pinned `luaparse` 0.3.1 CLI over the entry point; `just lua-control`
-feeds the same parser an invalid snippet and requires rejection, so a recipe
-that stopped reading the entry point cannot pass silently. `just check` runs
-all three.
-
-## Capabilities
-
-Capabilities are deny by default: a request absent from `[capabilities]` is
-denied, identifiers come from a closed set, and there is no allow-all entry.
-Request the narrowest identifier the plugin actually uses, one at a time.
-High-risk identifiers (`terminal.raw-read`, `terminal.input.all`,
-`ui.protocol-register`, `debug.control`, `runtime.plugin-manage`, and similar)
-trigger distinct consent and should not be added without a reviewed need.
-
-Filesystem access is declared as structured requests with explicit patterns:
-
-```toml
-[[capabilities.filesystem]]
-access = "read"
-paths = ["~/Documents/**/*.md"]
-```
-
-## API contract
-
-The `bitty` namespace used by `init.lua` is the accepted Plugin API v1 surface
-as frozen by the SDK generation pipeline (bitty-plugin-sdk #109, re-wired by
-SDK #118, host parity from bitty #1303 as re-wired by bitty #1391). The
-authoritative Lua bindings and type definitions are the
-SDK `bitty.d.lua` (R-SDK-1); do not use surface that contract does not define.
-`keymaps`, `tasks`, and `services` are WIRED on the current host (the example
-provides and resolves `greeter` live); `env` is a DEFERRED typed stub that
-fails closed with `E_NOT_IMPLEMENTED` (runtime), so its example call in
-`init.lua` stays commented out. `process.spawn` is
-v1-OUT and has no entry point.
-
-## Before publishing
-
-1. Add a `LICENSE` file and set `plugin.license` in `bitty-plugin.toml`.
-2. Confirm `compat.bitty` and `compat.plugin-api` match the host releases you
-   support.
-3. Replace this README's status note once the plugin is functional and tested
-   against a released host.
-4. Keep the repository free of secrets, install scripts, and ambient
-   authority.
+`just manifest` runs the authoritative `bitty-plugin-lint` from
+[bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk). `just
+lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar) and
+`just lua-control` proves the parser rejects invalid input. `just test` runs the
+entry point against the SDK `MockHost`, which owns capability gates, the
+activation registration window, scene-node validation, command argument
+schemas, event declarations, and the bounded workspace request queue; the
+parity tests compare every painted column with the Core reference model.
 
 ## Security
 
 Report vulnerabilities through the process in the umbrella project's security
-policy rather than a public issue. This scaffold contains no credentials and no
-install-time execution.
+policy rather than a public issue. The plugin requests no filesystem, process,
+network, clipboard, or terminal-input authority.

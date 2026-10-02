@@ -1,69 +1,286 @@
--- Entry point for Unified Bar (bitty-terminal.bar).
+-- Entry point for Unified Bar (bitty-terminal.bar): the workspace bar.
+--
+-- ADR-0014 keeps Workspace as a Core mechanism and moves every workspace
+-- presentation into plugins. This file renders the presentation the retired
+-- Core workspaceline drew (bitty-runtime `workspaceline_text`,
+-- `workspaceline_hit_test`, `workspaceline_click`) over the Plugin API v1
+-- surface only: `bitty.workspace.list/focus` (workspace.read /
+-- workspace.control), the `workspace.*` events, `bitty.settings`, and one
+-- `bitty.ui.mount` band. The authoritative bindings are the SDK `bitty.d.lua`
+-- (R-SDK-1); nothing outside that contract is used.
 --
 -- The host evaluates this file once per plugin activation and owns every
--- resource created here for the lifetime of that generation.
---
--- The `bitty` namespace below is the accepted Plugin API v1 surface, frozen
--- on the SDK generation pipeline (bitty-plugin-sdk #109, re-wired by SDK
--- #118): per-namespace host parity from bitty #1303 as re-wired by bitty
--- #1391, where `keymaps`, `tasks`, and `services` are WIRED bridge captures
--- while `env` is DEFERRED and fails closed with typed `E_NOT_IMPLEMENTED`
--- (runtime); `process.spawn` is v1-OUT and has no entry
--- point. The authoritative Lua bindings are the SDK `bitty.d.lua` (R-SDK-1);
--- do not use surface that contract does not define.
---
--- Capabilities used here must match `bitty-plugin.toml`: the notification
--- below is covered by the single `platform.notify` request. No other ambient
--- authority (filesystem, process, network, clipboard, terminal input) is
--- granted or assumed.
+-- resource created here for the lifetime of that generation. The code stays
+-- inside the Lua 5.1 grammar (the `just lua` gate) and uses no `utf8` library.
 
 local M = {}
 
--- Command `id` is a plugin-local short segment; the host assembles the
--- qualified `<plugin-id>:<resource>` name from the `[lazy].commands`
--- reservation in `bitty-plugin.toml`. Pass the short `id` here, never the
--- qualified name; duplicate qualified names are rejected at graph
--- construction time instead of shadowing another plugin.
-bitty.commands.register({
-  id = "hello",
-  title = "Unified Bar: hello",
-  description = "Print a greeting from Unified Bar.",
-  run = function()
-    bitty.notify.show({
-      title = "Unified Bar",
-      body = "Hello from bitty-terminal.bar.",
-    })
-  end,
-})
+local PLUGIN_ID = "bitty-terminal.bar"
 
--- WIRED follow-ups (safe to enable; no extra capability needed):
--- `keymaps.suggest` never overrides user or workspace mappings, and
--- `tasks.spawn`/`timers.create` are generation-owned on the host scheduler.
--- bitty.keymaps.suggest({
---   chord = "ctrl+shift+h",
---   command = "bitty-terminal.bar:hello",
---   when = "global",
--- })
--- bitty.tasks.spawn(function() end)
+-- Plugin-local command segment; the host qualifies it from the `[lazy]`
+-- reservation in `bitty-plugin.toml`. Click bindings carry the qualified name.
+local FOCUS_COMMAND_ID = "focus"
+M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
 
--- WIRED services (bitty #1391): `provide` registers the manifest-declared
--- implementation below (`[services.provided]` in `bitty-plugin.toml`) and
--- `get` resolves it back during activation.
-bitty.services.provide("bitty-terminal.bar.greeter", {
-  hello = function()
-    return "hi"
-  end,
-})
-local service = bitty.services.get("bitty-terminal.bar.greeter", { version = ">=1.0.0" })
-if service ~= nil then
-  print(service.hello())
+-- Bounds mirrored from the retired Core workspaceline so the retirement is
+-- behavior-preserving (bitty-runtime `runtime/workspaces.rs`).
+M.NAME_MAX_CHARS = 32 -- WORKSPACE_NAME_MAX_CHARS (characters per pill name)
+M.LINE_MAX_BYTES = 1024 -- WORKSPACELINE_MAX_CHARS (UTF-8 bytes, char-boundary cut)
+M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
+
+M.ACTIVE_MARK = "*"
+M.SEPARATOR = " "
+-- Fail-closed placeholder for an empty workspace list (U+2014 EM DASH).
+M.EMPTY_PLACEHOLDER = "\226\128\148"
+-- Theme token for the active pill; host-resolved, never a raw color.
+M.ACTIVE_FG = "accent"
+
+-- Accepted bar edges and the band slot each one mounts into.
+M.EDGE_SLOTS = { top = "top", bottom = "bottom" }
+
+-- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
+-- `show` / `edge` replace the retired Core `workspace.show_bar` /
+-- `workspace.bar.edge`; `show_single` opts into a lone-workspace bar, which
+-- Core always hid.
+M.DEFAULTS = {
+  show = true,
+  edge = "bottom",
+  show_single = false,
+  name_max_chars = M.NAME_MAX_CHARS,
+}
+
+-- A band whose text is empty is not painted by the host.
+local HIDDEN = { kind = "Text", text = "" }
+
+local function is_integer(value)
+  return type(value) == "number" and value == math.floor(value)
 end
 
--- DEFERRED namespace (typed stub; every call fails closed with
--- `E_NOT_IMPLEMENTED` (runtime) until the host backend lands, so it stays
--- commented out in the runnable example):
--- if bitty.env then
---   print(bitty.env.has("EDITOR"), bitty.env.get("EDITOR"))
--- end
+-- Truncates `text` to at most `max_chars` UTF-8 characters (Core
+-- `truncate_ws_name`, which counts Rust `char`s).
+function M.truncate_chars(text, max_chars)
+  local out = {}
+  local count = 0
+  for char in string.gmatch(text, "[^\128-\191][\128-\191]*") do
+    if count >= max_chars then
+      break
+    end
+    count = count + 1
+    out[count] = char
+  end
+  return table.concat(out)
+end
+
+-- Truncates `text` to at most `max_bytes` bytes on a UTF-8 character
+-- boundary (Core `String::truncate` after the `is_char_boundary` walk).
+function M.truncate_bytes(text, max_bytes)
+  if #text <= max_bytes then
+    return text
+  end
+  local cut = max_bytes
+  while cut > 0 do
+    local byte = string.byte(text, cut + 1)
+    if byte < 128 or byte > 191 then
+      break
+    end
+    cut = cut - 1
+  end
+  return string.sub(text, 1, cut)
+end
+
+-- Reads and validates the plugin settings; any absent or invalid value falls
+-- back to its default so a bad configuration never hides or breaks the bar.
+function M.read_settings(get)
+  local opts = {}
+  for key, default in pairs(M.DEFAULTS) do
+    opts[key] = default
+  end
+  local show = get("show")
+  if type(show) == "boolean" then
+    opts.show = show
+  end
+  local edge = get("edge")
+  if type(edge) == "string" and M.EDGE_SLOTS[edge] ~= nil then
+    opts.edge = edge
+  end
+  local show_single = get("show_single")
+  if type(show_single) == "boolean" then
+    opts.show_single = show_single
+  end
+  local name_max = get("name_max_chars")
+  if is_integer(name_max) and name_max >= 1 and name_max <= M.NAME_MAX_CHARS then
+    opts.name_max_chars = name_max
+  end
+  return opts
+end
+
+-- Whether the bar presents (Core `bar_present`): enabled, and either more
+-- than one workspace, the fail-closed empty list, or an explicit opt-in.
+function M.visible(rows, opts)
+  if not opts.show then
+    return false
+  end
+  return #rows ~= 1 or opts.show_single
+end
+
+-- Ordered bar segments before the byte bound: one pill per workspace
+-- (`{1-based}:{name}` plus `*` on the active one), single-space separators,
+-- and the ` ({count})` suffix. The concatenated text equals Core
+-- `workspaceline_text` for the same rows.
+function M.segments(rows, opts)
+  if #rows == 0 then
+    return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
+  end
+  local out = {}
+  local count = math.min(#rows, M.MAX_WORKSPACES)
+  for index = 1, count do
+    local row = rows[index]
+    if index > 1 then
+      out[#out + 1] = { kind = "separator", text = M.SEPARATOR }
+    end
+    local mark = row.active and M.ACTIVE_MARK or ""
+    out[#out + 1] = {
+      kind = "pill",
+      text = index .. ":" .. M.truncate_chars(row.name, opts.name_max_chars) .. mark,
+      id = row.id,
+      active = row.active == true,
+    }
+  end
+  out[#out + 1] = { kind = "suffix", text = " (" .. count .. ")" }
+  return out
+end
+
+-- Applies the line byte bound across segments; the segment that crosses the
+-- bound is cut on a character boundary and everything after it is dropped.
+function M.clip(segments, max_bytes)
+  local out = {}
+  local used = 0
+  for _, segment in ipairs(segments) do
+    local remaining = max_bytes - used
+    if remaining <= 0 then
+      break
+    end
+    local text = segment.text
+    if #text > remaining then
+      text = M.truncate_bytes(text, remaining)
+    end
+    if text ~= "" then
+      local copy = {}
+      for key, value in pairs(segment) do
+        copy[key] = value
+      end
+      copy.text = text
+      out[#out + 1] = copy
+      used = used + #text
+    end
+    if text ~= segment.text then
+      break
+    end
+  end
+  return out
+end
+
+-- Scene node for one segment. Only inactive pills are clickable: separators,
+-- the count suffix, and the active pill switch nothing (Core
+-- `workspaceline_hit_test` / `workspaceline_click`).
+local function segment_node(segment)
+  local node = { kind = "Text", text = segment.text }
+  if segment.kind == "pill" then
+    if segment.active then
+      node.bold = true
+      node.fg = M.ACTIVE_FG
+    else
+      node.on_click = { command = M.FOCUS_COMMAND, args = { id = segment.id } }
+    end
+  end
+  return node
+end
+
+-- Full bar component for the given rows and settings.
+function M.component(rows, opts)
+  if not M.visible(rows, opts) then
+    return HIDDEN
+  end
+  local children = {}
+  for _, segment in ipairs(M.clip(M.segments(rows, opts), M.LINE_MAX_BYTES)) do
+    children[#children + 1] = segment_node(segment)
+  end
+  return { kind = "Row", children = children }
+end
+
+-- Focus target for a click: the workspace id when it names an existing,
+-- inactive workspace; nil otherwise (fail closed, no request queued).
+function M.focus_target(rows, id)
+  if not is_integer(id) or id < 1 then
+    return nil
+  end
+  for _, row in ipairs(rows) do
+    if row.id == id then
+      if row.active then
+        return nil
+      end
+      return math.floor(id)
+    end
+  end
+  return nil
+end
+
+-- Host wiring. Skipped when the host table is absent so the pure functions
+-- above stay loadable on their own.
+if bitty == nil then
+  return M
+end
+
+local function settings_get(key)
+  return bitty.settings.get(key)
+end
+
+local opts = M.read_settings(settings_get)
+
+-- Mounts are registration calls valid only during activation, so the band
+-- edge is fixed per generation; an `edge` change applies on the next one.
+local block = bitty.ui.mount(M.EDGE_SLOTS[opts.edge], M.component(bitty.workspace.list(), opts))
+
+local function render()
+  bitty.ui.update(block, M.component(bitty.workspace.list(), opts))
+end
+
+bitty.commands.register({
+  id = FOCUS_COMMAND_ID,
+  title = "Unified Bar: focus workspace",
+  description = "Focus the workspace with this stable id (workspace bar click target).",
+  args_schema = {
+    type = "object",
+    properties = {
+      id = { type = "number", minimum = 1 },
+    },
+    required = { "id" },
+    additionalProperties = false,
+  },
+  run = function(args)
+    local target = M.focus_target(bitty.workspace.list(), args.id)
+    if target == nil then
+      return false
+    end
+    return bitty.workspace.focus(target)
+  end,
+})
+
+for _, name in ipairs({
+  "workspace.created",
+  "workspace.closed",
+  "workspace.renamed",
+  "workspace.focused",
+  "workspace.changed",
+}) do
+  bitty.events.subscribe(name, render)
+end
+
+bitty.events.subscribe("config.reloaded", function()
+  local edge = opts.edge
+  opts = M.read_settings(settings_get)
+  opts.edge = edge
+  render()
+end)
 
 return M

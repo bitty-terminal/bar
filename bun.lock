@@ -5,16 +5,21 @@
     "": {
       "name": "bitty-terminal.bar",
       "devDependencies": {
-        "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#e1723b60cc94d3abc18821c9e6b14c6c88f33add",
+        "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#4f9f1ba7ba85e8a24a192bb5b766402dab84c885",
         "luaparse": "0.3.1",
+        "wasmoon": "1.16.0",
       },
     },
   },
   "packages": {
-    "bitty-plugin-sdk": ["bitty-plugin-sdk@github:bitty-terminal/bitty-plugin-sdk#e1723b6", { "dependencies": { "smol-toml": "1.8.0" }, "bin": { "bitty-plugin-lint": "./src/cli.ts" } }, "bitty-terminal-bitty-plugin-sdk-e1723b6", "sha512-qa5nyJ+TDozDMQHHJz4rXXgMdE7FzYGLlvH6Hol4To4walPhQtUn4KUkFAMVldCIZWurfBCigN7FkJE5SuN5bA=="],
+    "@types/emscripten": ["@types/emscripten@1.39.10", "", {}, "sha512-TB/6hBkYQJxsZHSqyeuO1Jt0AB/bW6G7rHt9g7lML7SOF6lbgcHvw/Lr+69iqN0qxgXLhWKScAon73JNnptuDw=="],
+
+    "bitty-plugin-sdk": ["bitty-plugin-sdk@github:bitty-terminal/bitty-plugin-sdk#4f9f1ba", { "dependencies": { "smol-toml": "1.8.0" }, "bin": { "bitty-plugin-lint": "./src/cli.ts" } }, "bitty-terminal-bitty-plugin-sdk-4f9f1ba", "sha512-Q9zDZSmrkd3S0ACLdVgGSoU5hQA+DLBaodCYzedDKC8CN5x/sdAgqFDDfVa3D5gpTGlClpEaGJl/2JJRTPk6YQ=="],
 
     "luaparse": ["luaparse@0.3.1", "", { "bin": { "luaparse": "bin/luaparse" } }, "sha512-b21h2bFEbtGXmVqguHogbyrMAA0wOHyp9u/rx+w6Yc9pW1t9YjhGUsp87lYcp7pFRqSWN/PhFkrdIqKEUzRjjQ=="],
 
     "smol-toml": ["smol-toml@1.8.0", "", {}, "sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ=="],
+
+    "wasmoon": ["wasmoon@1.16.0", "", { "dependencies": { "@types/emscripten": "1.39.10" }, "bin": { "wasmoon": "bin/wasmoon" } }, "sha512-FlRLb15WwAOz1A9OQDbf6oOKKSiefi5VK0ZRF2wgH9xk3o5SnU11tNPaOnQuAh1Ucr66cwwvVXaeVRaFdRBt5g=="],
   }
 }
