@@ -14,6 +14,8 @@ export const MAX_WORKSPACES = 16;
 
 export interface CoreSlot {
   readonly name: string;
+  /** Stable workspace seq (Core `slot.seq`); labels never renumber on close. */
+  readonly seq: number;
 }
 
 export interface CoreState {
@@ -34,7 +36,7 @@ function truncateWsName(name: string): string {
 function tokens(state: CoreState): string[] {
   return state.workspaces.map(
     (slot, idx) =>
-      `${idx + 1}:${truncateWsName(slot.name)}${idx === state.active ? "*" : ""}`,
+      `${slot.seq}:${truncateWsName(slot.name)}${idx === state.active ? "*" : ""}`,
   );
 }
 

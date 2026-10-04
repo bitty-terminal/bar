@@ -40,7 +40,7 @@ function coreState(
   visible = true,
 ): core.CoreState {
   return {
-    workspaces: rows.map((row) => ({ name: row.name })),
+    workspaces: rows.map((row) => ({ name: row.name, seq: row.id })),
     active: Math.max(
       0,
       rows.findIndex((row) => row.active),
@@ -121,7 +121,7 @@ describe("rendering parity with the Core workspaceline", () => {
     const run = await bar({ workspaces: THREE });
     const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
     expect(active).toEqual([
-      { kind: "Text", text: "2:code*", bold: true, fg: "accent" },
+      { kind: "Text", text: "4:code*", bold: true, fg: "accent" },
     ]);
   });
 });
@@ -154,7 +154,7 @@ describe("visibility", () => {
       settings: { show: "no", edge: "left", show_single: 1, name_max_chars: 0 },
     });
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("1:ws1 2:code* 3:logs (3)");
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
   });
 
   test("name_max_chars shortens pill labels", async () => {
@@ -162,7 +162,7 @@ describe("visibility", () => {
       workspaces: THREE,
       settings: { name_max_chars: 2 },
     });
-    expect(painted(run)).toBe("1:ws 2:co* 3:lo (3)");
+    expect(painted(run)).toBe("1:ws 4:co* 9:lo (3)");
   });
 });
 
@@ -201,6 +201,31 @@ describe("live updates", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
+  test("closing workspaces keeps stable-seq labels (W-104 R1 live proof)", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)],
+    });
+    expect(painted(run)).toBe("1:ws1 2:ws2 3:ws3* (3)");
+
+    // Live proof: closing #1 leaves Core painting `2:ws2 3:ws3*`; the
+    // position-based plugin painted `1:ws2 2:ws3*` instead.
+    run.host.setWorkspaces([ws(2, "ws2"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.closed", { id: 1 });
+    const afterFirstClose = [ws(2, "ws2"), ws(3, "ws3", true)];
+    expect(painted(run)).toBe("2:ws2 3:ws3* (2)");
+    expect(painted(run)).toBe(core.statusBarText(coreState(afterFirstClose)));
+
+    // Closing the middle never renumbers the tail either.
+    run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.created", { id: 1, name: "ws1" });
+    run.host.setWorkspaces([ws(1, "ws1"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.closed", { id: 2 });
+    const afterMiddleClose = [ws(1, "ws1"), ws(3, "ws3", true)];
+    expect(painted(run)).toBe("1:ws1 3:ws3* (2)");
+    expect(painted(run)).toBe(core.statusBarText(coreState(afterMiddleClose)));
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
   test("config.reloaded applies show and label settings live", async () => {
     const run = await bar({ workspaces: THREE });
     run.host.bitty.settings.set("show", false);
@@ -210,7 +235,7 @@ describe("live updates", () => {
     run.host.bitty.settings.set("show", true);
     run.host.bitty.settings.set("name_max_chars", 1);
     run.host.publish("config.reloaded", {});
-    expect(painted(run)).toBe("1:w 2:c* 3:l (3)");
+    expect(painted(run)).toBe("1:w 4:c* 9:l (3)");
   });
 
   test("an edge change waits for the next generation (mounts are activation-only)", async () => {
@@ -218,7 +243,7 @@ describe("live updates", () => {
     run.host.bitty.settings.set("edge", "top");
     run.host.publish("config.reloaded", {});
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("1:ws1 2:code* 3:logs (3)");
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
     expect(run.host.handlerViolations).toEqual([]);
   });
 });
@@ -227,7 +252,7 @@ describe("click to focus", () => {
   test("clicking an inactive pill queues focus by stable id", async () => {
     const run = await bar({ workspaces: THREE });
     const pill = leaves(run.component()).find(
-      (leaf) => leaf.text === "3:logs",
+      (leaf) => leaf.text === "9:logs",
     )!;
     const { command, args } = pill.on_click!;
     expect(run.host.dispatchCommand(command, args)).toBe(true);
@@ -283,7 +308,7 @@ describe("capability gates", () => {
       workspaces: THREE,
       grants: ["ui.rich", "workspace.read"],
     });
-    expect(painted(run)).toBe("1:ws1 2:code* 3:logs (3)");
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
     expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
       HostError,
     );
