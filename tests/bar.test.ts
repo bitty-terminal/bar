@@ -315,3 +315,112 @@ describe("capability gates", () => {
     expect(run.host.drainWorkspaceRequests()).toEqual([]);
   });
 });
+
+describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
+  const EMPTY = { count: 0, occupied: false };
+  const OCCUPIED = { count: 1, occupied: true };
+  const occupiedRows = (rows: readonly WorkspaceInfo[]): WorkspaceInfo[] =>
+    rows.map((row) => ws(row.id, row.name, row.active, OCCUPIED));
+
+  test("an empty slot renders no indicator (Core parity preserved)", async () => {
+    const rows = THREE.map((row) => ws(row.id, row.name, row.active, EMPTY));
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe(core.statusBarText(coreState(rows)));
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("rows from a host without the surface render no indicator", async () => {
+    const run = await bar({ workspaces: THREE });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("an occupied slot appends the indicator after the Core text", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe(
+      `${core.statusBarText(coreState(rows))} [scratchpad]`,
+    );
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+    const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
+    expect(active).toEqual([
+      { kind: "Text", text: "4:code*", bold: true, fg: "accent" },
+    ]);
+  });
+
+  test("indicator columns queue nothing (no panel capability involved)", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({ workspaces: rows });
+    const text = textOf(run.component());
+    const start = text.indexOf(" [scratchpad]");
+    expect(start).toBeGreaterThanOrEqual(0);
+    for (
+      let column = start;
+      column < start + " [scratchpad]".length;
+      column += 1
+    ) {
+      expect(leafAt(run.component(), column)?.on_click).toBeUndefined();
+    }
+    expect(run.host.drainWorkspaceRequests()).toEqual([]);
+  });
+
+  test("a count above the single-slot ceiling renders defensively", async () => {
+    const rows = THREE.map((row) =>
+      ws(row.id, row.name, row.active, { count: 2, occupied: true }),
+    );
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe(
+      `${core.statusBarText(coreState(rows))} [scratchpad:2]`,
+    );
+  });
+
+  test("invalid scratchpad fields read as empty (fail closed)", async () => {
+    const rows = THREE.map(
+      (row) =>
+        ws(row.id, row.name, row.active, {
+          count: "many",
+          occupied: "yes",
+        }) as WorkspaceInfo,
+    );
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("workspace.changed flips the indicator live (put and take)", async () => {
+    const run = await bar({ workspaces: THREE });
+    expect(textOf(run.component())).not.toContain("scratchpad");
+
+    run.host.setWorkspaces(occupiedRows(THREE));
+    run.host.publish("workspace.changed", { id: 4 });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+
+    run.host.setWorkspaces(THREE);
+    run.host.publish("workspace.changed", { id: 4 });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("a lone workspace with an occupied slot shows the bar", async () => {
+    const rows = [ws(1, "ws1", true, OCCUPIED)];
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("1:ws1* (1) [scratchpad]");
+  });
+
+  test("occupancy needs no grant beyond workspace.read", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({
+      workspaces: rows,
+      grants: ["ui.rich", "workspace.read"],
+    });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+    expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
+      HostError,
+    );
+  });
+
+  test("the manifest requests no panel capability", () => {
+    expect(MANIFEST_SOURCE).not.toMatch(/panel/);
+  });
+});
