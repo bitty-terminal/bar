@@ -7,7 +7,9 @@
 -- surface only: `bitty.workspace.list/focus` (workspace.read /
 -- workspace.control), the `workspace.*` events, `bitty.settings`, and one
 -- `bitty.ui.mount` band. The authoritative bindings are the SDK `bitty.d.lua`
--- (R-SDK-1); nothing outside that contract is used.
+-- (R-SDK-1); nothing outside that contract is used, except the
+-- capability-neutral `scratchpad_count` / `scratchpad_occupied` row fields
+-- (Core CTX-0954) read tolerantly under the same `workspace.read` grant.
 --
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
@@ -37,6 +39,15 @@ M.ACTIVE_FG = "accent"
 
 -- Accepted bar edges and the band slot each one mounts into.
 M.EDGE_SLOTS = { top = "top", bottom = "bottom" }
+
+-- Scratchpad indicator (W-104 R2-consumer, DEC-W104-1): the window scratchpad
+-- slot is window-global (at most one parked panel), so every row of one
+-- `bitty.workspace.list()` result carries the same `scratchpad_count`
+-- (`0`/`1`) and `scratchpad_occupied` snapshot under the existing
+-- `workspace.read` grant (Core CTX-0954). No panel capability is consulted.
+-- Rows from an older host lack both fields and read as empty.
+M.SCRATCHPAD_LABEL = "scratchpad"
+M.SCRATCHPAD_COUNT_MAX = 1 -- Core SCRATCHPAD_COUNT_MAX (single-slot ceiling)
 
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
@@ -114,21 +125,77 @@ function M.read_settings(get)
   return opts
 end
 
+-- Window scratchpad occupancy derived from `bitty.workspace.list()` rows
+-- (Core CTX-0954): the slot is window-global, so the rows of one result
+-- agree; the read stays tolerant (the highest valid count wins, any presence
+-- flag wins) and fail closed (absent or invalid fields read as empty, which
+-- is also how rows from a host without the surface render: no indicator).
+function M.scratchpad_state(rows)
+  local count = 0
+  local occupied = false
+  for _, row in ipairs(rows) do
+    local field = row.scratchpad_count
+    if type(field) == "number" and field == math.floor(field) and field > count then
+      count = field
+    end
+    if row.scratchpad_occupied == true then
+      occupied = true
+    end
+  end
+  if count < 0 then
+    count = 0
+  end
+  if occupied and count < 1 then
+    count = 1
+  end
+  if count > 0 then
+    occupied = true
+  end
+  return { count = count, occupied = occupied }
+end
+
+-- Scratchpad indicator segment for the occupied slot, or nil when empty. The
+-- count rides the state and is shown only when it exceeds the single-slot
+-- ceiling (never on current hosts, where presence alone carries the `0`/`1`).
+-- Appended after the workspace count suffix so the Core workspaceline text
+-- stays an exact prefix; never clickable (no panel capability is involved).
+function M.scratchpad_segment(rows)
+  local state = M.scratchpad_state(rows)
+  if not state.occupied then
+    return nil
+  end
+  local text = M.SEPARATOR .. "[" .. M.SCRATCHPAD_LABEL
+  if state.count > M.SCRATCHPAD_COUNT_MAX then
+    text = text .. ":" .. state.count
+  end
+  return { kind = "scratchpad", text = text .. "]" }
+end
+
 -- Whether the bar presents (Core `bar_present`): enabled, and either more
--- than one workspace, the fail-closed empty list, or an explicit opt-in.
+-- than one workspace, the fail-closed empty list, an explicit opt-in, or an
+-- occupied scratchpad (window-global state worth showing even with a lone
+-- workspace; an empty slot keeps the Core hide-lone behavior).
 function M.visible(rows, opts)
   if not opts.show then
     return false
   end
-  return #rows ~= 1 or opts.show_single
+  if #rows ~= 1 then
+    return true
+  end
+  if opts.show_single then
+    return true
+  end
+  return M.scratchpad_state(rows).occupied
 end
 
 -- Ordered bar segments before the byte bound: one pill per workspace
 -- (`{stable-id}:{name}` plus `*` on the active one), single-space separators,
--- and the ` ({count})` suffix. The id is the stable workspace seq from
+-- the ` ({count})` suffix, and the scratchpad indicator when the slot is
+-- occupied. The id is the stable workspace seq from
 -- `bitty.workspace.list()` (Core `workspaceline_tokens` renders `slot.seq`),
--- so closing a workspace never renumbers the survivors. The concatenated
--- text equals Core `workspaceline_text` for the same rows.
+-- so closing a workspace never renumbers the survivors. Without an occupied
+-- scratchpad the concatenated text equals Core `workspaceline_text` for the
+-- same rows.
 function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
@@ -149,6 +216,10 @@ function M.segments(rows, opts)
     }
   end
   out[#out + 1] = { kind = "suffix", text = " (" .. count .. ")" }
+  local scratchpad = M.scratchpad_segment(rows)
+  if scratchpad ~= nil then
+    out[#out + 1] = scratchpad
+  end
   return out
 end
 

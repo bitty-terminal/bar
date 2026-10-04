@@ -55,15 +55,33 @@ export interface MountRecord {
   component: SceneNode;
 }
 
+/** Scratchpad occupancy snapshot (Core CTX-0954, bitty PR #1671). */
+export interface ScratchpadState {
+  readonly count?: unknown;
+  readonly occupied?: unknown;
+}
+
 /** Workspace row with the defaults the bridge fills in. */
-export function ws(id: number, name: string, active = false): WorkspaceInfo {
-  return {
+export function ws(
+  id: number,
+  name: string,
+  active = false,
+  scratchpad: ScratchpadState = {},
+): WorkspaceInfo {
+  const row: Record<string, unknown> = {
     id,
     name,
     active,
     panel_count: 1,
     attention: { bell: false, activity: false, exited: false },
   };
+  // Rows without scratchpad fields model a host without the CTX-0954
+  // surface; the plugin must read them as an empty slot (fail closed).
+  if (scratchpad.count !== undefined) row.scratchpad_count = scratchpad.count;
+  if (scratchpad.occupied !== undefined) {
+    row.scratchpad_occupied = scratchpad.occupied;
+  }
+  return row as WorkspaceInfo;
 }
 
 export interface BarRun {
@@ -116,6 +134,32 @@ export async function activateBar(
   for (const capability of options.grants ?? BAR_CAPABILITIES) {
     host.grant(capability);
   }
+  // The pinned SDK mock predates the CTX-0954 surface: `setWorkspaces`
+  // validates the known fields and drops `scratchpad_count` /
+  // `scratchpad_occupied`. The sidecar below carries those fields past the
+  // mock (keyed by row index, like the host's window-global snapshot) and
+  // merges them back into every `workspace.list()` result the plugin sees,
+  // including rows set later via `host.setWorkspaces` in live-update tests.
+  // Capability gating still runs inside the mock: a denied `workspace.read`
+  // throws before the merge, exactly like the host bridge.
+  let scratchSidecar: ReadonlyArray<{
+    readonly count: unknown;
+    readonly occupied: unknown;
+  }> = [];
+  const captureScratch = (rows: readonly WorkspaceInfo[]): void => {
+    scratchSidecar = rows.slice(0, 16).map((row) => {
+      const record = row as unknown as Record<string, unknown>;
+      return {
+        count: record.scratchpad_count ?? 0,
+        occupied: record.scratchpad_occupied ?? false,
+      };
+    });
+  };
+  const originalSetWorkspaces = host.setWorkspaces.bind(host);
+  host.setWorkspaces = ((rows: readonly WorkspaceInfo[]): void => {
+    captureScratch(rows);
+    originalSetWorkspaces(rows);
+  }) as MockHost["setWorkspaces"];
   host.setWorkspaces(options.workspaces ?? []);
   host.beginActivation();
   for (const [key, value] of Object.entries(options.settings ?? {})) {
@@ -124,8 +168,29 @@ export async function activateBar(
 
   const mounts: MountRecord[] = [];
   const ui = host.bitty.ui;
+  const bridged = nilSafe(host.bitty);
+  const workspaceList = (
+    bridged.workspace as { readonly list: () => WorkspaceInfo[] }
+  ).list;
   const bitty = {
-    ...nilSafe(host.bitty),
+    ...bridged,
+    workspace: {
+      ...(bridged.workspace as Record<string, unknown>),
+      list: (): WorkspaceInfo[] =>
+        (workspaceList() as Array<WorkspaceInfo & Record<string, unknown>>).map(
+          (row, index) => {
+            const scratch = scratchSidecar[index] ?? {
+              count: 0,
+              occupied: false,
+            };
+            return {
+              ...row,
+              scratchpad_count: scratch.count,
+              scratchpad_occupied: scratch.occupied,
+            };
+          },
+        ),
+    },
     ui: {
       mount: (slot: string, component: SceneNode): number => {
         const handle = ui.mount(slot, component as never);

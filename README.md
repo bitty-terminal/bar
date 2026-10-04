@@ -43,6 +43,31 @@ or invalid values fall back to the default.
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
 
+### Scratchpad indicator
+
+The window scratchpad slot is window-global (at most one parked panel), so
+every row of one `bitty.workspace.list()` result carries the same
+`scratchpad_count` (`0`/`1`) and `scratchpad_occupied` snapshot (Core CTX-0954,
+bitty PR #1671). The bar reads that snapshot tolerantly (the highest valid
+count wins, any presence flag wins; absent or invalid fields read as empty)
+and appends ` [scratchpad]` after the ` ({count})` suffix while the slot is
+occupied. The count rides the state and is shown only when it exceeds the
+single-slot ceiling (` [scratchpad:N]`; never on current hosts, where presence
+alone carries the `0`/`1`). Without an occupied slot the painted text equals
+the Core workspaceline text exactly.
+
+- The indicator is presentation only: it is never clickable and queues no
+  request. Occupancy arrives under the existing `workspace.read` grant (the
+  same `workspace.list()` rows); no panel capability is requested or
+  consulted, and no new event family is needed: Core fires the existing
+  `workspace.changed` on a put/take flip, which the bar already re-renders
+  from.
+- An occupied slot forces the bar visible even with a lone workspace; an
+  empty slot keeps the Core hide-lone behavior. `show = false` still hides
+  everything.
+- Hosts without the CTX-0954 surface omit both fields, so the bar renders
+  without the indicator (fail closed).
+
 ### Capabilities
 
 `ui.rich` (mount and update the band), `workspace.read` (`list` and the
