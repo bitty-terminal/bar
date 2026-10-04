@@ -13,8 +13,10 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
 
 ## Workspace bar
 
-- One pill per workspace, `{position}:{name}`, joined by single spaces and
-  followed by ` ({count})`. The active pill carries `*`, bold, and the
+- One pill per workspace, `{stable-id}:{name}`, joined by single spaces and
+  followed by ` ({count})`. The id is the stable workspace seq from
+  `bitty.workspace.list()` (Core renders `slot.seq`), so closing a workspace
+  never renumbers the survivors. The active pill carries `*`, bold, and the
   `accent` theme token. An empty workspace list renders `—` (fail closed).
 - Names are cut to 32 characters (or `name_max_chars`); the whole line is
   bounded to 1024 UTF-8 bytes, cut on a character boundary.

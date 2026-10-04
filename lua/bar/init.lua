@@ -124,9 +124,11 @@ function M.visible(rows, opts)
 end
 
 -- Ordered bar segments before the byte bound: one pill per workspace
--- (`{1-based}:{name}` plus `*` on the active one), single-space separators,
--- and the ` ({count})` suffix. The concatenated text equals Core
--- `workspaceline_text` for the same rows.
+-- (`{stable-id}:{name}` plus `*` on the active one), single-space separators,
+-- and the ` ({count})` suffix. The id is the stable workspace seq from
+-- `bitty.workspace.list()` (Core `workspaceline_tokens` renders `slot.seq`),
+-- so closing a workspace never renumbers the survivors. The concatenated
+-- text equals Core `workspaceline_text` for the same rows.
 function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
@@ -141,7 +143,7 @@ function M.segments(rows, opts)
     local mark = row.active and M.ACTIVE_MARK or ""
     out[#out + 1] = {
       kind = "pill",
-      text = index .. ":" .. M.truncate_chars(row.name, opts.name_max_chars) .. mark,
+      text = row.id .. ":" .. M.truncate_chars(row.name, opts.name_max_chars) .. mark,
       id = row.id,
       active = row.active == true,
     }
