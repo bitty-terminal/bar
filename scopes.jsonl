@@ -1,0 +1,8 @@
+{"created_at":"2026-10-04T09:37:13.752893149+00:00","id":"01M434CM0RDEE237M0R45ZK8A9","kind":"include","pattern":"lua/bar/init.lua","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M434C4BW10BXJCF38SBWKJPF"}
+{"created_at":"2026-10-04T09:37:13.778809354+00:00","id":"01M434CM1JSTENFN3VMYVTPB8N","kind":"include","pattern":"tests/bar.test.ts","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M434C4BW10BXJCF38SBWKJPF"}
+{"created_at":"2026-10-04T09:37:13.803033147+00:00","id":"01M434CM2BB3Z25Z1CE6P3VM3A","kind":"include","pattern":"tests/core-workspaceline.ts","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M434C4BW10BXJCF38SBWKJPF"}
+{"created_at":"2026-10-04T09:37:13.827533009+00:00","id":"01M434CM33305PBEGFT0YRPRVZ","kind":"include","pattern":"README.md","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M434C4BW10BXJCF38SBWKJPF"}
+{"created_at":"2026-10-04T10:43:56.663262566+00:00","id":"01M4386S3QGMKFBW5JDZWPEA4P","kind":"include","pattern":"lua/bar/init.lua","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M43866PNRBJNQZMAY2BRDE17"}
+{"created_at":"2026-10-04T10:43:56.681360226+00:00","id":"01M4386S49JCT7JE9HSMSS02KK","kind":"include","pattern":"tests/harness.ts","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M43866PNRBJNQZMAY2BRDE17"}
+{"created_at":"2026-10-04T10:43:56.698669644+00:00","id":"01M4386S4TNQNBSY7J1T0B23CF","kind":"include","pattern":"tests/bar.test.ts","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M43866PNRBJNQZMAY2BRDE17"}
+{"created_at":"2026-10-04T10:43:56.718652080+00:00","id":"01M4386S5EJV12FXY07XVYMH0X","kind":"include","pattern":"README.md","project_id":"01M3XS32MTRQKW8TF80H46KZ51","task_id":"01M43866PNRBJNQZMAY2BRDE17"}
