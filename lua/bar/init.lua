@@ -25,7 +25,7 @@ local FOCUS_COMMAND_ID = "focus"
 M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
 
 -- Bounds mirrored from the retired Core workspaceline so the retirement is
--- behavior-preserving (bitty-runtime `runtime/workspaces.rs`).
+-- behavior-preserving (bitty@55f9d336 `crates/bitty-runtime/src/runtime/workspaces.rs`).
 M.NAME_MAX_CHARS = 32 -- WORKSPACE_NAME_MAX_CHARS (characters per pill name)
 M.LINE_MAX_BYTES = 1024 -- WORKSPACELINE_MAX_CHARS (UTF-8 bytes, char-boundary cut)
 M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
