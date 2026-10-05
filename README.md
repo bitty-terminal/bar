@@ -98,7 +98,7 @@ Gaps in the current host, not in this plugin:
 | `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers. |
 | `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`. |
 | `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.       |
-| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline.                         |
+| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).        |
 | `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                          |
 | `justfile`                    | Quality gates with pinned tool versions.                                   |
 

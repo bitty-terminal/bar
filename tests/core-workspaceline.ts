@@ -1,11 +1,14 @@
 /**
  * Reference model of the Core workspaceline that ADR-0014 retires
- * (bitty `crates/bitty-runtime/src/runtime/workspaces.rs`:
+ * (bitty@55f9d336 `crates/bitty-runtime/src/runtime/workspaces.rs`:
  * `workspaceline_text`, `workspaceline_tokens`, `bar_present`,
  * `status_bar_text`, `workspaceline_hit_test`, `workspaceline_click`).
  *
  * Kept deliberately literal so the parity tests compare the plugin against
  * the Core behavior, not against a restatement of the plugin.
+ *
+ * Re-verify: rebuild Core at bitty@55f9d336 and rerun the live-host parity
+ * proof per the W-104 procedure before changing this model.
  */
 
 export const WORKSPACE_NAME_MAX_CHARS = 32;
