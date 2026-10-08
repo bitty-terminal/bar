@@ -12,9 +12,12 @@ import {
 } from "bitty-plugin-sdk";
 
 import * as core from "./core-workspaceline.js";
+import { LuaFactory } from "wasmoon";
+
 import {
   activateBar,
   type BarRun,
+  ENTRY_SOURCE,
   FOCUS_COMMAND,
   leafAt,
   leaves,
@@ -422,5 +425,40 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
 
   test("the manifest requests no panel capability", () => {
     expect(MANIFEST_SOURCE).not.toMatch(/panel/);
+  });
+});
+
+describe("headless activation regression (bar#6)", () => {
+  test("two-row ASCII stub mounts (issue repro: main/alt)", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "main", true), ws(2, "alt")],
+    });
+    expect(painted(run)).toBe("1:main* 2:alt (2)");
+  });
+
+  test("truncate_chars counts portably without pattern bytes", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as {
+        truncate_chars(text: string, max: number): string;
+      };
+      expect(mod.truncate_chars("hello", 32)).toBe("hello");
+      expect(mod.truncate_chars("hello", 2)).toBe("he");
+      expect(mod.truncate_chars("日本語", 2)).toBe("日本");
+      expect(mod.truncate_chars("🚀 deploy", 1)).toBe("🚀");
+      expect(mod.truncate_chars("", 32)).toBe("");
+      expect(mod.truncate_chars("hello", 0)).toBe("");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("runtime code uses no phodopus-rejected pattern bytes", () => {
+    const code = ENTRY_SOURCE.split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    expect(code).not.toMatch(/gmatch.*\\128/);
+    expect(code).not.toMatch(/\[\^\\128/);
   });
 });
