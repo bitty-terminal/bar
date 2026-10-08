@@ -69,15 +69,40 @@ end
 
 -- Truncates `text` to at most `max_chars` UTF-8 characters (Core
 -- `truncate_ws_name`, which counts Rust `char`s).
+--
+-- Portable byte walk (bar#6): the classic `[^\128-\191][\128-\191]*` gmatch
+-- pattern embeds isolated UTF-8 continuation bytes (0x80-0xBF), which the
+-- phodopus engine rejects as an invalid UTF-8 pattern itself (`invalid utf-8
+-- sequence of 1 bytes from index 2` during mount, even for ASCII rows).
+-- Walking with `string.byte`/`string.sub` needs no non-UTF8 pattern bytes
+-- and counts identically on every engine.
 function M.truncate_chars(text, max_chars)
   local out = {}
   local count = 0
-  for char in string.gmatch(text, "[^\128-\191][\128-\191]*") do
+  local i = 1
+  local n = #text
+  while i <= n do
     if count >= max_chars then
       break
     end
+    local byte = string.byte(text, i)
+    local len = 1
+    if byte >= 240 and byte < 248 then
+      len = 4
+    elseif byte >= 224 and byte < 240 then
+      len = 3
+    elseif byte >= 192 and byte < 224 then
+      len = 2
+    else
+      len = 1
+    end
+    -- Clamp a truncated tail (split sequence at end of input): take the rest.
+    if i + len - 1 > n then
+      len = n - i + 1
+    end
     count = count + 1
-    out[count] = char
+    out[count] = string.sub(text, i, i + len - 1)
+    i = i + len
   end
   return table.concat(out)
 end
