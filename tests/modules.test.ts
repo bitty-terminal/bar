@@ -378,18 +378,28 @@ describe("pure chassis helpers", () => {
     expect(fallback.map((spec) => spec.name)).toEqual(["workspaces"]);
   });
 
-  test("the module registry exposes workspaces, clock, and the device modules", () => {
+  test("the module registry exposes workspaces, clock, and the Phase B modules", () => {
     const modules = mod["MODULES"] as Record<string, { name: string }>;
     expect(Object.keys(modules).sort()).toEqual([
       "backlight",
+      "battery",
       "bluetooth",
       "clock",
+      "cpu",
       "idle",
+      "memory",
       "network",
       "workspaces",
     ]);
     expect(modules["workspaces"]!.name).toBe("workspaces");
     expect(modules["clock"]!.name).toBe("clock");
+    expect(modules["network"]!.name).toBe("network");
+    expect(modules["bluetooth"]!.name).toBe("bluetooth");
+    expect(modules["backlight"]!.name).toBe("backlight");
+    expect(modules["idle"]!.name).toBe("idle");
+    expect(modules["cpu"]!.name).toBe("cpu");
+    expect(modules["memory"]!.name).toBe("memory");
+    expect(modules["battery"]!.name).toBe("battery");
   });
 
   test("tick floors keep device modules at their contract cadence", () => {

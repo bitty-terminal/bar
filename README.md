@@ -61,6 +61,13 @@ broker-provided interface and refreshes on its own cadence:
   `workspace.*` events — no timer where events suffice.
 - `clock` (timer module): `os.date` with a per-module `format` (a restricted,
   zero-grant local source); refreshes on `tick_ms`.
+- `cpu` (timer module, Phase B): aggregate CPU utilization from the broker
+  `system.cpu@1.0.0` provider (`bitty-terminal.sensors`); polls at the 2 s
+  provider ceiling.
+- `memory` (timer module, Phase B): memory and swap utilization from
+  `system.memory@1.0.0`; polls at the 2 s ceiling.
+- `battery` (timer module, Phase B): capacity and charge state from
+  `system.battery@1.0.0`; polls at the 5 s ceiling.
 
 A bad spec never hides the bar: an unknown module name, a non-name entry, a
 non-list group, or a plan that resolves to nothing falls back to the default
@@ -125,6 +132,50 @@ requested in `[capabilities]` (read heads plus each control head only for the
 toggle/step variants) once the SDK closed set admits them — the pinned SDK
 currently rejects them with `capabilities.unknown`. No Lua change is needed
 when they land.
+
+### Modules (Phase B sensors)
+
+Sensor modules negotiate their provider (`bitty.services.get` with an
+explicit `{ version = "^1.0", optional = true }`, inside pcall), poll one
+sample per tick, and hide fail closed when the provider is absent, ungranted,
+stale past the horizon, revoked, or malformed — a hidden sensor never hides
+the bar. Thresholds and icon buckets evaluate Lua-side; the provider sends
+raw numbers and states only:
+
+| Module    | Option     | Type    | Default                | Notes                                                       |
+| --------- | ---------- | ------- | ---------------------- | ----------------------------------------------------------- |
+| `cpu`     | `format`   | string  | `"{total}%"`           | Template keys: `{total}`, `{total_pct}` (rounded integer).  |
+| `cpu`     | `warning`  | number  | `80`                   | At-or-above reads `warning`; needs `warning` < `critical`.  |
+| `cpu`     | `critical` | number  | `90`                   | At-or-above reads `critical`.                               |
+| `cpu`     | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `cpu`     | `tooltip`  | string  | none                   | Default detail: `CPU 42% (8 cores)`.                        |
+| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{pct}`, `{used}`, `{total}` (GiB), swap triple.      |
+| `memory`  | `warning`  | number  | `80`                   | Same hot direction as `cpu`.                                |
+| `memory`  | `critical` | number  | `90`                   | Same hot direction as `cpu`.                                |
+| `memory`  | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `memory`  | `tooltip`  | string  | none                   | Default: `Memory 5/8 GiB (63%)`, plus swap when reported.   |
+| `battery` | `format`   | string  | `"{icon} {capacity}%"` | Keys: `{icon}`, `{capacity}`, `{state}`.                    |
+| `battery` | `warning`  | number  | `30`                   | At-or-below (discharging only) reads `warning`.             |
+| `battery` | `critical` | number  | `15`                   | At-or-below (discharging only) reads `critical`.            |
+| `battery` | `tick_ms`  | integer | `5000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `battery` | `tooltip`  | string  | none                   | Default: `Battery 63% discharging`, plus `W` and time left. |
+
+Battery icons are five ASCII buckets by capacity (`[    ]` through
+`[====]`) with a `+` mark while charging. Only a discharging battery alarms
+on low capacity; `full`, `charging`, `plugged`, and `unknown` render the
+icon with the default presentation. Bar visibility stays workspace-driven
+(a lone workspace still hides the bar unless `show_single` is set);
+sensor-only plans inherit that rule.
+
+**Activation follow-up (not in this change).** Rendering against the live
+host additionally needs manifest declarations the pinned SDK linter does not
+accept yet (`[services.required]` for `system.cpu`/`system.memory`/
+`system.battery` at `^1.0`, the `platform.cpu-read`, `platform.memory-read`,
+and `platform.battery-read` heads, and `[settings]` entries for every key
+this plugin reads). Until the SDK models those surfaces, the modules ship
+fail-closed: they render under the mock host and hide on a live host
+without grants. The exact delta is tracked in the Phase B follow-up under
+bitty-plugins#86.
 
 A JSON settings array/object crosses the bridge into Lua as an indexable value
 (not a plain table), so module lists and per-module options are read through that
