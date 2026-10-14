@@ -27,15 +27,23 @@ plugin-api = "^1.0"
 # - workspace.read: `bitty.workspace.list` and the `workspace.*` events.
 # - workspace.control: `bitty.workspace.focus` for pill clicks (read never
 #   implies control, ADR-0014).
+# - platform.notify: the tooltip→notify fallback (`bitty.notify.show`) for a
+#   module that carries detail text but no click command; best-effort and
+#   fail-closed when ungranted.
 ui.rich = true
 workspace.read = true
 workspace.control = true
+platform.notify = true
 
 [lazy]
 # Static triggers let the host register the plugin without creating a VM.
 # Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` is the
-# click target bound to every inactive workspace pill.
-commands = ["bitty-terminal.bar:focus"]
+# click target bound to every inactive workspace pill; `detail` is the
+# tooltip→notify fallback bound to a module's detail text.
+commands = [
+  "bitty-terminal.bar:focus",
+  "bitty-terminal.bar:detail",
+]
 events = [
   "workspace.created",
   "workspace.closed",

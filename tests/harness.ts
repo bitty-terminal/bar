@@ -32,6 +32,7 @@ export const BAR_CAPABILITIES = [
   "ui.rich",
   "workspace.read",
   "workspace.control",
+  "platform.notify",
 ] as const;
 
 export const FOCUS_COMMAND = "bitty-terminal.bar:focus";
@@ -90,6 +91,8 @@ export interface BarRun {
   readonly mounts: MountRecord[];
   /** Last component of the single bar block. */
   component(): SceneNode;
+  /** Number of `bitty.ui.update` calls the plugin issued on the block. */
+  updates(): number;
   close(): void;
 }
 
@@ -167,6 +170,7 @@ export async function activateBar(
   }
 
   const mounts: MountRecord[] = [];
+  let updateCount = 0;
   const ui = host.bitty.ui;
   const bridged = nilSafe(host.bitty);
   const workspaceList = (
@@ -199,6 +203,7 @@ export async function activateBar(
       },
       update: (handle: number, component: SceneNode): boolean => {
         const updated = ui.update(handle, component as never);
+        updateCount += 1;
         const record = mounts.find((entry) => entry.handle === handle);
         if (updated && record !== undefined) record.component = component;
         return updated;
@@ -224,6 +229,9 @@ export async function activateBar(
         throw new Error(`expected exactly one bar block, got ${mounts.length}`);
       }
       return mounts[0]!.component;
+    },
+    updates(): number {
+      return updateCount;
     },
     close(): void {
       lua.global.close();
