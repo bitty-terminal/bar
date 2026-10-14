@@ -30,6 +30,13 @@ plugin-api = "^1.0"
 # - platform.notify: the tooltip→notify fallback (`bitty.notify.show`) for a
 #   module that carries detail text but no click command; best-effort and
 #   fail-closed when ungranted.
+# - Device heads (`platform.network.read`, `platform.essid.read`,
+#   `platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
+#   `platform.idle.read/.control`) are NOT requested yet: the pinned SDK
+#   closed set rejects them (`capabilities.unknown`), so the Phase B modules
+#   resolve their providers with `optional = true` and hide while ungranted.
+#   Request the read heads (plus each control head only for the toggle/step
+#   variants) once the SDK admits them; no Lua change is needed.
 ui.rich = true
 workspace.read = true
 workspace.control = true
@@ -39,10 +46,16 @@ platform.notify = true
 # Static triggers let the host register the plugin without creating a VM.
 # Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` is the
 # click target bound to every inactive workspace pill; `detail` is the
-# tooltip→notify fallback bound to a module's detail text.
+# tooltip→notify fallback bound to a module's detail text; the
+# `bluetooth-toggle`, `backlight-step`, and `idle-toggle` commands are the
+# device-module control click targets (each calls exactly one control method
+# on its own control interface, never anything else).
 commands = [
   "bitty-terminal.bar:focus",
   "bitty-terminal.bar:detail",
+  "bitty-terminal.bar:bluetooth-toggle",
+  "bitty-terminal.bar:backlight-step",
+  "bitty-terminal.bar:idle-toggle",
 ]
 events = [
   "workspace.created",

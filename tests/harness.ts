@@ -100,6 +100,46 @@ export interface BarRunOptions {
   readonly workspaces?: readonly WorkspaceInfo[];
   readonly settings?: Readonly<Record<string, unknown>>;
   readonly grants?: readonly string[];
+  /**
+   * Fixture broker providers keyed by short interface name. The harness
+   * serves these from the bridged `bitty.services.get` before the mock's
+   * own directory (which stays empty in bar tests, so an unlisted interface
+   * resolves exactly like an ungranted or absent provider: nil with
+   * `optional = true`, `E_SERVICE_RESOLUTION` otherwise). Versions are
+   * checked with a minimal `^`/`>=` comparison, documented as a test-only
+   * approximation of the SDK range grammar.
+   */
+  readonly services?: Readonly<
+    Record<string, { readonly version?: string; readonly impl: ServiceImpl }>
+  >;
+}
+
+/** Plain service implementation: method name to function. */
+export type ServiceImpl = Record<string, (...args: never[]) => unknown>;
+
+/** Minimal `^`/`>=` version check (test-only approximation). */
+function versionOk(version: string, requirement: unknown): boolean {
+  if (typeof requirement !== "string" || requirement === "") return false;
+  const parts = version.split(".").map(Number);
+  if (parts.length < 3 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
+    return false;
+  }
+  let range = requirement;
+  let operator = "=";
+  if (range.startsWith("^") || range.startsWith(">=")) {
+    operator = range.startsWith("^") ? "^" : ">=";
+    range = range.slice(operator.length);
+  }
+  const wanted = range.split(".").map(Number);
+  if (wanted.some((n) => !Number.isInteger(n) || n < 0)) return false;
+  const major = wanted[0] ?? 0;
+  const minor = wanted[1] ?? 0;
+  if (operator === "^") {
+    return parts[0] === major && (parts[1]! > minor || parts[1] === minor);
+  }
+  if (parts[0]! !== major) return parts[0]! > major;
+  if ((parts[1] ?? 0) !== minor) return (parts[1] ?? 0) > minor;
+  return (parts[2] ?? 0) >= (wanted[2] ?? 0);
 }
 
 const factory = new LuaFactory();
@@ -173,11 +213,30 @@ export async function activateBar(
   let updateCount = 0;
   const ui = host.bitty.ui;
   const bridged = nilSafe(host.bitty);
+  const bridgedServices = bridged.services as {
+    readonly get: (iface: string, opts: unknown) => unknown;
+  };
+  const fixtureGet = (iface: string, opts: unknown): unknown => {
+    const fixture = options.services?.[iface];
+    if (fixture === undefined) return bridgedServices.get(iface, opts);
+    const settings = (opts ?? {}) as { version?: unknown; optional?: unknown };
+    if (!versionOk(fixture.version ?? "1.0.0", settings.version)) {
+      if (settings.optional === true) return undefined;
+      throw new Error(
+        `E_SERVICE_RESOLUTION: provider for ${iface} does not satisfy version`,
+      );
+    }
+    return fixture.impl;
+  };
   const workspaceList = (
     bridged.workspace as { readonly list: () => WorkspaceInfo[] }
   ).list;
   const bitty = {
     ...bridged,
+    services: {
+      ...(bridged.services as Record<string, unknown>),
+      get: fixtureGet,
+    },
     workspace: {
       ...(bridged.workspace as Record<string, unknown>),
       list: (): WorkspaceInfo[] =>
