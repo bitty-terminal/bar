@@ -101,21 +101,58 @@ export interface BarRunOptions {
   readonly settings?: Readonly<Record<string, unknown>>;
   readonly grants?: readonly string[];
   /**
-   * Fixture broker providers keyed by short interface name. The harness
-   * serves these from the bridged `bitty.services.get` before the mock's
-   * own directory (which stays empty in bar tests, so an unlisted interface
-   * resolves exactly like an ungranted or absent provider: nil with
-   * `optional = true`, `E_SERVICE_RESOLUTION` otherwise). Versions are
-   * checked with a minimal `^`/`>=` comparison, documented as a test-only
-   * approximation of the SDK range grammar.
+   * Fixture broker providers keyed by short interface name, in one of two
+   * stub shapes (one entry per interface). The harness serves these from the
+   * bridged `bitty.services.get` before the mock's own directory (which
+   * stays empty in bar tests, so an unlisted interface resolves exactly like
+   * an ungranted or absent provider: nil with `optional = true`,
+   * `E_SERVICE_RESOLUTION` otherwise).
+   * - Device fixtures (Phase B device modules) carry `version` + `impl`: a
+   *   plain service implementation served when the fixture version satisfies
+   *   the requested range. Versions are checked with a minimal `^`/`>=`
+   *   comparison, documented as a test-only approximation of the SDK range
+   *   grammar.
+   * - Sensor stubs (Phase B sensor modules: `system.cpu`, `system.memory`,
+   *   `system.battery`) carry `snapshot` / `resolutionError` / `callError`.
+   *   The pinned SDK mock predates the sensor providers: it has no host-side
+   *   provider injection and its manifest model rejects the production
+   *   `[services.required]` + `platform.*-read` declarations, so the harness
+   *   overrides the bridged `bitty.services.get` with these stubs.
+   *   `snapshot` is the table `get()` serves, or a function returning it (a
+   *   fresh call per poll, so tests can mutate readings between ticks);
+   *   `null`/missing models a stale-past-horizon provider (hide).
+   *   `resolutionError` makes `services.get` itself throw, modeling the
+   *   host's undeclared-manifest resolution failure (hide, never a
+   *   violation). `callError` makes `get()` throw, modeling a revoked grant
+   *   mid-generation (hide, never a violation).
+   *
+   * Interfaces without a stub delegate to the mock's real `services.get`,
+   * which serves nil for an optional lookup with no provider (the
+   * absent-provider hide path).
    */
-  readonly services?: Readonly<
-    Record<string, { readonly version?: string; readonly impl: ServiceImpl }>
-  >;
+  readonly services?: Readonly<Record<string, ServiceStub>>;
 }
 
 /** Plain service implementation: method name to function. */
 export type ServiceImpl = Record<string, (...args: never[]) => unknown>;
+
+/**
+ * One broker provider stub: a device fixture (`version` + `impl`), a sensor
+ * stub (`snapshot` / `resolutionError` / `callError`), or an unlisted
+ * interface (absent-provider path). Fields from the unused shape stay absent;
+ * the `get` override below routes entries carrying `impl` to the device
+ * fixture path and every other entry to the sensor stub path.
+ */
+export interface ServiceStub {
+  readonly version?: string;
+  readonly impl?: ServiceImpl;
+  readonly snapshot?:
+    | Record<string, unknown>
+    | null
+    | (() => Record<string, unknown> | null | undefined);
+  readonly resolutionError?: boolean;
+  readonly callError?: boolean;
+}
 
 /** Minimal `^`/`>=` version check (test-only approximation). */
 function versionOk(version: string, requirement: unknown): boolean {
@@ -231,11 +268,50 @@ export async function activateBar(
   const workspaceList = (
     bridged.workspace as { readonly list: () => WorkspaceInfo[] }
   ).list;
+  const mockServicesGet = (
+    bridged.services as { readonly get: (...args: unknown[]) => unknown }
+  ).get;
+  const stubbed = options.services ?? {};
+  const servicesGet = (iface: string, opts?: unknown): unknown => {
+    const stub = stubbed[iface];
+    if (stub === undefined) {
+      return mockServicesGet(iface, opts);
+    }
+    // Pin the negotiation spelling: an explicit version requirement is
+    // mandatory for the SDK mock and accepted as an override by the host
+    // bridge (whose fallback is the manifest `[services.required]` entry).
+    // A regressed call without it fails here, hiding the module in tests
+    // exactly as it would fail closed on the host.
+    const requirement = (opts as Record<string, unknown> | undefined)?.version;
+    if (typeof requirement !== "string" || requirement.length === 0) {
+      throw new Error("services.get requires opts.version");
+    }
+    if (stub.resolutionError === true) {
+      throw new Error(`no provider satisfies '${iface}' (available: none)`);
+    }
+    return {
+      get: (): unknown => {
+        if (stub.callError === true) {
+          throw new Error(`service '${iface}.get' is unavailable`);
+        }
+        const snapshot =
+          typeof stub.snapshot === "function" ? stub.snapshot() : stub.snapshot;
+        if (snapshot === null || snapshot === undefined) return undefined;
+        return { ...snapshot };
+      },
+    };
+  };
   const bitty = {
     ...bridged,
     services: {
       ...(bridged.services as Record<string, unknown>),
-      get: fixtureGet,
+      get: (iface: string, opts?: unknown): unknown => {
+        const stub = (options.services ?? {})[iface];
+        if (stub !== undefined && stub.impl !== undefined) {
+          return fixtureGet(iface, opts);
+        }
+        return servicesGet(iface, opts);
+      },
     },
     workspace: {
       ...(bridged.workspace as Record<string, unknown>),

@@ -17,11 +17,13 @@
 -- list (Waybar-style `modules_left`/`modules_center`/`modules_right`); each
 -- module is a registry entry `{ name, kind, tick_ms, events, render(data) }`
 -- that renders atoms from local data or a broker interface on its own cadence.
--- Clicks dispatch registered commands only and never shell out. Phase B adds
--- the first system modules (`network`, `bluetooth`, `backlight`, `idle`) over
--- broker `owner:iface@version` providers; true centering (`modules_center`),
--- scroll bindings, real tooltips, and the tray need new Core vehicles and are
--- Phase C. No new Core API is introduced here.
+-- Clicks dispatch registered commands only and never shell out. Phase B
+-- adds the first system modules (device modules `network`, `bluetooth`,
+-- `backlight`, `idle` plus sensor modules cpu/memory/battery over broker
+-- `owner:iface@version` providers) in the same registry below; true
+-- centering (`modules_center`), scroll bindings, real tooltips, and the
+-- tray need new Core vehicles and are Phase C. No new Core API is
+-- introduced here.
 --
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
@@ -91,6 +93,45 @@ M.SCRATCHPAD_COUNT_MAX = 1 -- Core SCRATCHPAD_COUNT_MAX (single-slot ceiling)
 -- Clock module defaults: `os.date` is a restricted, zero-grant local source.
 M.CLOCK_DEFAULT_FORMAT = "%H:%M"
 M.CLOCK_TICK_MS = 60000
+-- Phase B sensor providers (bitty#2019 cpu, bitty#2011 memory, bitty#2016
+-- battery). The native component `bitty-terminal.sensors` serves the short
+-- interfaces `system.cpu` / `system.memory` / `system.battery` at `1.0.0`
+-- with one read-only method (`get`), each backed 1:1 by a read-only head
+-- (`platform.cpu-read` / `platform.memory-read` / `platform.battery-read`).
+-- Provider-side ceilings with over-poll coalescing (2s cpu/memory, 5s
+-- battery) and stale-then-hide live in the provider; thresholds and icon
+-- buckets live here in Lua (the provider returns raw numbers/states only).
+-- Negotiation passes an explicit `{ version, optional = true }` so the call
+-- is accepted by the host bridge (where the manifest `[services.required]`
+-- entry supplies the fallback requirement) and by the SDK mock host (which
+-- mandates `opts.version`); the whole negotiation stays inside pcall so an
+-- ungranted or absent provider hides the module fail closed.
+M.SENSOR_VERSION_REQ = "^1.0"
+M.CPU_IFACE = "system.cpu"
+M.MEMORY_IFACE = "system.memory"
+M.BATTERY_IFACE = "system.battery"
+-- Module cadences poll at the provider ceilings (bitty
+-- `system_sensors::common::{FAST,SLOW}_SENSOR_CEILING_MS`), so one tick
+-- serves one fresh sample without over-polling.
+M.CPU_TICK_MS = 2000
+M.MEMORY_TICK_MS = 2000
+M.BATTERY_TICK_MS = 5000
+-- Threshold defaults (percent). CPU/memory read hot at or above the marks;
+-- a discharging battery reads low at or below the marks.
+M.CPU_WARNING_DEFAULT = 80
+M.CPU_CRITICAL_DEFAULT = 90
+M.MEMORY_WARNING_DEFAULT = 80
+M.MEMORY_CRITICAL_DEFAULT = 90
+M.BATTERY_WARNING_DEFAULT = 30
+M.BATTERY_CRITICAL_DEFAULT = 15
+-- Display formats over the bounded template renderer.
+M.CPU_DEFAULT_FORMAT = "{total}%"
+M.MEMORY_DEFAULT_FORMAT = "{pct}%"
+M.BATTERY_DEFAULT_FORMAT = "{icon} {capacity}%"
+-- Battery icon buckets (ASCII only, five levels by capacity). The charging
+-- mark is appended while charging; level and alarm selection stay in Lua.
+M.BATTERY_ICONS = { "[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]" }
+M.BATTERY_CHARGING_MARK = "+"
 -- Template renderer cap (bytes) for a bounded `{key}` substitution.
 M.TEMPLATE_MAX_BYTES = 1024
 -- Notification title for the tooltip fallback.
@@ -829,16 +870,435 @@ function M.idle_atoms(ctx)
   return { atom }
 end
 
--- In-plugin module registry (bitty-plugins#86 Phase A). Each entry declares
--- how it renders and how it refreshes:
+-- Negotiated provider handles, keyed by short interface. Successes cache for
+-- the generation; failures retry on the next poll so a late provider lights
+-- up without a reload. Negotiation is a local directory lookup, never I/O.
+M._providers = {}
+
+-- Resolves one sensor provider, or nil when the provider is absent,
+-- ungranted, or the negotiation itself is rejected (for example an
+-- undeclared `[services.required]` entry on the host, which fails the
+-- resolution as an error rather than a nil). Every failure hides the module
+-- fail closed; none of them may fail activation.
+function M.negotiate(iface)
+  if M._providers[iface] ~= nil then
+    return M._providers[iface]
+  end
+  if bitty == nil or bitty.services == nil or bitty.services.get == nil then
+    return nil
+  end
+  local ok, handle = pcall(
+    bitty.services.get,
+    iface,
+    { version = M.SENSOR_VERSION_REQ, optional = true }
+  )
+  if not ok or handle == nil then
+    return nil
+  end
+  M._providers[iface] = handle
+  return handle
+end
+
+-- Polls one negotiated provider, or nil when the sample is stale past the
+-- provider horizon, the grant was revoked mid-generation, or the call
+-- itself fails. The provider never fabricates zeros: a nil poll hides.
+function M.poll(handle)
+  if type(handle) ~= "table" and type(handle) ~= "userdata" then
+    return nil
+  end
+  local get = handle.get
+  if type(get) ~= "function" then
+    return nil
+  end
+  local ok, snapshot = pcall(get, {})
+  if not ok or snapshot == nil then
+    return nil
+  end
+  if type(snapshot) ~= "table" and type(snapshot) ~= "userdata" then
+    return nil
+  end
+  return snapshot
+end
+
+-- A numeric snapshot field, or nil when absent or mistyped. A malformed
+-- snapshot hides the module; the provider contract pins every key.
+local function snap_number(snapshot, key)
+  local value = snapshot[key]
+  if type(value) ~= "number" then
+    return nil
+  end
+  return value
+end
+
+-- A text snapshot field, or nil when absent or mistyped.
+local function snap_text(snapshot, key)
+  local value = snapshot[key]
+  if type(value) ~= "string" then
+    return nil
+  end
+  return value
+end
+
+-- Display rounding for a percent in `[0, 100]`, or nil when not a number.
+function M.round_pct(value)
+  if type(value) ~= "number" then
+    return nil
+  end
+  return math.floor(value + 0.5)
+end
+
+-- Display rounding to one decimal, or nil when not a number.
+function M.round1(value)
+  if type(value) ~= "number" then
+    return nil
+  end
+  return math.floor(value * 10 + 0.5) / 10
+end
+
+-- Display text for a rounded number that reads identically on Lua 5.1 and
+-- 5.3+: whole values render without a trailing `.0` (5.4 floats), fractions
+-- keep one decimal. Returns "" when not a number.
+function M.num1(value)
+  if type(value) ~= "number" then
+    return ""
+  end
+  if value == math.floor(value) then
+    return tostring(math.floor(value))
+  end
+  return tostring(M.round1(value))
+end
+
+-- A duration in seconds as `1h23m` / `45m` / `30s`, or nil when unusable.
+function M.format_duration(seconds)
+  if type(seconds) ~= "number" or seconds < 0 then
+    return nil
+  end
+  local total = math.floor(seconds)
+  local hours = math.floor(total / 3600)
+  local minutes = math.floor((total % 3600) / 60)
+  if hours > 0 then
+    return hours .. "h" .. minutes .. "m"
+  end
+  if minutes > 0 then
+    return minutes .. "m"
+  end
+  return (total % 60) .. "s"
+end
+
+-- Core count from a `per_core` array, tolerant of the bridge shape (a JSON
+-- array crosses as a table or as indexable userdata; anything else reads 0
+-- and the aggregate still renders).
+function M.core_count(per_core)
+  if type(per_core) == "table" then
+    return #per_core
+  end
+  if type(per_core) == "userdata" then
+    local ok, count = pcall(function()
+      return #per_core
+    end)
+    if ok and type(count) == "number" then
+      return math.floor(count)
+    end
+  end
+  return 0
+end
+
+-- Alarm state for a value that reads hot at or above the marks (cpu,
+-- memory), or nil when the value is not a number.
+function M.hot_state(value, warning, critical)
+  if type(value) ~= "number" then
+    return nil
+  end
+  if value >= critical then
+    return "critical"
+  end
+  if value >= warning then
+    return "warning"
+  end
+  return "normal"
+end
+
+-- Alarm state for a value that reads low at or below the marks (a
+-- discharging battery), or nil when the value is not a number.
+function M.low_state(value, warning, critical)
+  if type(value) ~= "number" then
+    return nil
+  end
+  if value <= critical then
+    return "critical"
+  end
+  if value <= warning then
+    return "warning"
+  end
+  return "normal"
+end
+
+-- Validated warning/critical pair from per-module options with shipped
+-- defaults, as `{ warning, critical }`. Each mark falls back independently
+-- when it is not a number in `[0, 100]`; an inverted pair falls back
+-- wholesale so a bad configuration can neither pin an alarm on nor silence
+-- one (`hot` requires warning < critical, low requires warning > critical).
+function M.thresholds(options, warn_default, crit_default, hot)
+  local warning = warn_default
+  local critical = crit_default
+  local w = options.warning
+  local c = options.critical
+  if type(w) == "number" and w >= 0 and w <= 100 then
+    warning = w
+  end
+  if type(c) == "number" and c >= 0 and c <= 100 then
+    critical = c
+  end
+  if hot then
+    if warning >= critical then
+      warning = warn_default
+      critical = crit_default
+    end
+  else
+    if warning <= critical then
+      warning = warn_default
+      critical = crit_default
+    end
+  end
+  return { warning = warning, critical = critical }
+end
+
+-- Battery icon bucket (1..5) by capacity, or nil when not a number.
+function M.battery_bucket(capacity)
+  if type(capacity) ~= "number" then
+    return nil
+  end
+  if capacity < 10 then
+    return 1
+  end
+  if capacity < 35 then
+    return 2
+  end
+  if capacity < 65 then
+    return 3
+  end
+  if capacity < 90 then
+    return 4
+  end
+  return 5
+end
+
+-- Battery icon for a capacity/state pair (`""` when the capacity is not a
+-- number). The charging mark rides the icon; the alarm rides the theme
+-- token, never the glyph.
+function M.battery_icon(capacity, state)
+  local bucket = M.battery_bucket(capacity)
+  if bucket == nil then
+    return ""
+  end
+  local icon = M.BATTERY_ICONS[bucket]
+  if state == "charging" then
+    icon = icon .. M.BATTERY_CHARGING_MARK
+  end
+  return icon
+end
+
+-- CPU module render: one atom from the `system.cpu` snapshot, or no atoms
+-- (fail-closed hide) when the provider is absent, ungranted, stale past the
+-- horizon, or malformed. Thresholds evaluate Lua-side; the provider sends
+-- raw numbers only.
+function M.cpu_atoms(ctx)
+  local options = ctx.options or {}
+  local snapshot = nil
+  local handle = M.negotiate(M.CPU_IFACE)
+  if handle ~= nil then
+    snapshot = M.poll(handle)
+  end
+  if snapshot == nil then
+    return {}
+  end
+  local total = snap_number(snapshot, "total_pct")
+  if total == nil then
+    return {}
+  end
+  local marks = M.thresholds(
+    options,
+    M.CPU_WARNING_DEFAULT,
+    M.CPU_CRITICAL_DEFAULT,
+    true
+  )
+  local state = M.hot_state(total, marks.warning, marks.critical)
+  local shown = M.round_pct(total)
+  local format = options.format
+  if type(format) ~= "string" or format == "" then
+    format = M.CPU_DEFAULT_FORMAT
+  end
+  local text = M.render_template(
+    format,
+    { total = shown, total_pct = shown },
+    M.TEMPLATE_MAX_BYTES
+  )
+  if text == "" then
+    return {}
+  end
+  local atom = { text = text }
+  if state == "warning" or state == "critical" then
+    atom.fg = M.state_token(state)
+  end
+  local detail = options.tooltip
+  if type(detail) ~= "string" or detail == "" then
+    detail = "CPU " .. shown .. "% (" .. M.core_count(snapshot.per_core) .. " cores)"
+  end
+  atom.tooltip = detail
+  return { atom }
+end
+
+-- Memory module render: one atom from the `system.memory` snapshot, or no
+-- atoms when the provider is absent, ungranted, stale, or malformed. Swap
+-- rides the tooltip detail when the source reports a swap total.
+function M.memory_atoms(ctx)
+  local options = ctx.options or {}
+  local snapshot = nil
+  local handle = M.negotiate(M.MEMORY_IFACE)
+  if handle ~= nil then
+    snapshot = M.poll(handle)
+  end
+  if snapshot == nil then
+    return {}
+  end
+  local pct = snap_number(snapshot, "pct")
+  local used = snap_number(snapshot, "used_gib")
+  local total = snap_number(snapshot, "total_gib")
+  if pct == nil or used == nil or total == nil then
+    return {}
+  end
+  local marks = M.thresholds(
+    options,
+    M.MEMORY_WARNING_DEFAULT,
+    M.MEMORY_CRITICAL_DEFAULT,
+    true
+  )
+  local state = M.hot_state(pct, marks.warning, marks.critical)
+  local shown = M.round_pct(pct)
+  local format = options.format
+  if type(format) ~= "string" or format == "" then
+    format = M.MEMORY_DEFAULT_FORMAT
+  end
+  local text = M.render_template(format, {
+    pct = shown,
+    used = M.num1(used),
+    total = M.num1(total),
+    swap_pct = M.num1(snap_number(snapshot, "swap_pct")),
+    swap_used = M.num1(snap_number(snapshot, "swap_used_gib")),
+    swap_total = M.num1(snap_number(snapshot, "swap_total_gib")),
+  }, M.TEMPLATE_MAX_BYTES)
+  if text == "" then
+    return {}
+  end
+  local atom = { text = text }
+  if state == "warning" or state == "critical" then
+    atom.fg = M.state_token(state)
+  end
+  local detail = options.tooltip
+  if type(detail) ~= "string" or detail == "" then
+    detail = "Memory "
+      .. M.num1(used)
+      .. "/"
+      .. M.num1(total)
+      .. " GiB ("
+      .. shown
+      .. "%)"
+    local swap_total = snap_number(snapshot, "swap_total_gib")
+    if swap_total ~= nil and swap_total > 0 then
+      local swap_used = snap_number(snapshot, "swap_used_gib")
+      if swap_used == nil then
+        swap_used = 0
+      end
+      detail = detail
+        .. ", swap "
+        .. M.num1(swap_used)
+        .. "/"
+        .. M.num1(swap_total)
+        .. " GiB"
+    end
+  end
+  atom.tooltip = detail
+  return { atom }
+end
+
+-- Battery module render: one atom from the `system.battery` snapshot, or no
+-- atoms when the source is absent (batteryless or UPower-less with no
+-- sysfs battery), ungranted, stale, or malformed. Only a discharging
+-- battery alarms on low capacity; every other state renders the icon with
+-- the default presentation.
+function M.battery_atoms(ctx)
+  local options = ctx.options or {}
+  local snapshot = nil
+  local handle = M.negotiate(M.BATTERY_IFACE)
+  if handle ~= nil then
+    snapshot = M.poll(handle)
+  end
+  if snapshot == nil then
+    return {}
+  end
+  local capacity = snap_number(snapshot, "capacity_pct")
+  local state = snap_text(snapshot, "state")
+  if capacity == nil or state == nil then
+    return {}
+  end
+  local icon = M.battery_icon(capacity, state)
+  if icon == "" then
+    return {}
+  end
+  local shown = M.round_pct(capacity)
+  local format = options.format
+  if type(format) ~= "string" or format == "" then
+    format = M.BATTERY_DEFAULT_FORMAT
+  end
+  local text = M.render_template(format, {
+    icon = icon,
+    capacity = shown,
+    capacity_pct = shown,
+    state = state,
+  }, M.TEMPLATE_MAX_BYTES)
+  if text == "" then
+    return {}
+  end
+  local atom = { text = text }
+  if state == "discharging" then
+    local marks = M.thresholds(
+      options,
+      M.BATTERY_WARNING_DEFAULT,
+      M.BATTERY_CRITICAL_DEFAULT,
+      false
+    )
+    local alarm = M.low_state(capacity, marks.warning, marks.critical)
+    if alarm == "warning" or alarm == "critical" then
+      atom.fg = M.state_token(alarm)
+    end
+  end
+  local detail = options.tooltip
+  if type(detail) ~= "string" or detail == "" then
+    detail = "Battery " .. shown .. "% " .. state
+    local power = snap_number(snapshot, "power_w")
+    if power ~= nil then
+      detail = detail .. " " .. M.num1(power) .. "W"
+    end
+    local seconds = snapshot.seconds_to_empty
+    if type(seconds) == "number" then
+      local duration = M.format_duration(seconds)
+      if duration ~= nil then
+        detail = detail .. " " .. duration .. " left"
+      end
+    end
+  end
+  atom.tooltip = detail
+  return { atom }
+end
+
+-- In-plugin module registry (bitty-plugins#86 Phase A chassis, Phase B
+-- sensor modules). Each entry declares how it renders and how it refreshes:
 --   name    : the settings name that selects it in a module group.
 --   kind    : "event" (refresh from events.subscribe) or "timer" (refresh on
 --             tick_ms).
 --   tick_ms : timer cadence for a "timer" module; nil for an event module.
 --   events  : event names the module refreshes from (event modules only).
 --   render  : render(ctx) -> atoms from local data or a broker interface.
--- System modules (broker `owner:iface@version` providers) are Phase B and
--- register here unchanged when a provider lands.
 M.MODULES = {}
 
 M.MODULES.workspaces = {
@@ -912,6 +1372,36 @@ M.MODULES.idle = {
   option_keys = { "tick_ms", "tooltip", "on_text", "off_text" },
   render = function(ctx)
     return M.idle_atoms(ctx)
+  end,
+}
+
+M.MODULES.cpu = {
+  name = "cpu",
+  kind = "timer",
+  tick_ms = M.CPU_TICK_MS,
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  render = function(ctx)
+    return M.cpu_atoms(ctx)
+  end,
+}
+
+M.MODULES.memory = {
+  name = "memory",
+  kind = "timer",
+  tick_ms = M.MEMORY_TICK_MS,
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  render = function(ctx)
+    return M.memory_atoms(ctx)
+  end,
+}
+
+M.MODULES.battery = {
+  name = "battery",
+  kind = "timer",
+  tick_ms = M.BATTERY_TICK_MS,
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  render = function(ctx)
+    return M.battery_atoms(ctx)
   end,
 }
 
@@ -1383,6 +1873,9 @@ bitty.events.subscribe("config.reloaded", function()
   local edge = opts.edge
   opts = M.read_settings(settings_get)
   opts.edge = edge
+  -- Grants may have changed with the reload: drop negotiated handles so the
+  -- next poll re-negotiates instead of serving a revoked generation.
+  M._providers = {}
   reschedule()
   render()
 end)
