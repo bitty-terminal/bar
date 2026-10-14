@@ -95,7 +95,12 @@ merges the declared args with the computed `delta` (signed lines, positive for
 wheel-up) and invokes `bitty-terminal.bar:audio-step`, which clamps the burst
 to one bounded volume step.
 
-Per-module options live in a settings collection named after the module:
+Per-module options live in a settings collection named after the module.
+Each collection is declared in the manifest `[settings]` table (bitty#2010);
+under the v1 settings contract the collections have no table or dot-path
+form, so they are declared `string-array` with an empty default and read as
+module defaults until table settings land host- and SDK-side (CTX-1226). The
+option logic itself is unchanged and covered by the pure suites:
 
 | Module       | Option           | Type    | Default   | Notes                                                             |
 | ------------ | ---------------- | ------- | --------- | ----------------------------------------------------------------- |
@@ -150,13 +155,13 @@ narrowed grant takes effect without restart.
   that head is granted; a denied toggle degrades to a notification.
   Options: `tick_ms` (at or above 5 s), `tooltip`, `on_text`, `off_text`.
 
-Manifest remainder: the device heads (`platform.network.read`,
-`platform.essid.read`, `platform.bluetooth.read/.control`,
-`platform.backlight.read/.control`, `platform.idle.read/.control`) must be
-requested in `[capabilities]` (read heads plus each control head only for the
-toggle/step variants) once the SDK closed set admits them — the pinned SDK
-currently rejects them with `capabilities.unknown`. No Lua change is needed
-when they land.
+Manifest activation (CTX-1226, post-SDK#152): the device heads
+(`platform.network.read`, `platform.essid.read`,
+`platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
+`platform.idle.read/.control`) are requested in `[capabilities]` (read heads
+plus each control head for the toggle/step variants) alongside the matching
+`[services.required]` broker entries, so the modules render once the host
+grants them and hide fail closed otherwise. No Lua change was needed.
 
 ### Modules (Phase B sensors)
 
@@ -192,15 +197,17 @@ icon with the default presentation. Bar visibility stays workspace-driven
 (a lone workspace still hides the bar unless `show_single` is set);
 sensor-only plans inherit that rule.
 
-**Activation follow-up (not in this change).** Rendering against the live
-host additionally needs manifest declarations the pinned SDK linter does not
-accept yet (`[services.required]` for `system.cpu`/`system.memory`/
-`system.battery` at `^1.0`, the `platform.cpu-read`, `platform.memory-read`,
-and `platform.battery-read` heads, and `[settings]` entries for every key
-this plugin reads). Until the SDK models those surfaces, the modules ship
-fail-closed: they render under the mock host and hide on a live host
-without grants. The exact delta is tracked in the Phase B follow-up under
-bitty-plugins#86.
+**Activation (landed, CTX-1226).** The manifest declares `[services.required]`
+for `system.cpu`/`system.memory`/`system.battery` at `^1.0` (plus the device
+and audio provider interfaces at their Lua version requirements), the
+`platform.cpu-read`, `platform.memory-read`, and `platform.battery-read`
+heads, and `[settings]` entries for every key this plugin reads, so the
+modules render on a live host once granted and hide fail closed without
+grants (`tests/activation.test.ts` proves negotiate → grant → poll → render
+per family plus the ungranted-hides negative). One v1 limit remains: the
+per-module option collections have no table form in the settings contract,
+so option tables read as module defaults until table settings land (pure
+option logic is unchanged and covered by the pure suites).
 
 A JSON settings array/object crosses the bridge into Lua as an indexable value
 (not a plain table), so module lists and per-module options are read through that
@@ -242,20 +249,25 @@ the Core workspaceline text exactly.
 
 `ui.rich` (mount and update the band), `workspace.read` (`list` and the
 `workspace.*` events), `workspace.control` (`focus` for clicks), and
-`platform.notify` (the tooltip→notify `detail` fallback). Without
-`workspace.control` the bar still renders and pill clicks fail closed; without
-`platform.notify` the detail fallback fails closed. Device-module control
-clicks (`bluetooth-toggle`, `backlight-step`, `idle-toggle`) each call exactly
-one control method on their own control interface and only while that
+`platform.notify` (the tooltip→notify `detail` fallback), plus the 14 Phase B
+heads: `platform.cpu-read`/`memory-read`/`battery-read` (sensor providers),
+`platform.network.read`/`essid.read`,
+`platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
+`platform.idle.read/.control` (device providers, read never implying
+control), and `audio.state.read`/`state.control`/`spectrum` (audio monitor).
+Without `workspace.control` the bar still renders and pill clicks fail closed;
+without `platform.notify` the detail fallback fails closed. Device-module
+control clicks (`bluetooth-toggle`, `backlight-step`, `idle-toggle`) each call
+exactly one control method on their own control interface and only while that
 interface resolves; a denied call degrades to a notification and never
 retries.
 
 The audio modules negotiate the `audio.state@1.0.0`, `audio.control@1.0.0`,
 and `audio.spectrum@1.0.0` broker interfaces optionally: without the
 `audio.state.read`, `audio.state.control`, and `audio.spectrum` heads the
-modules hide (fail closed). Those heads ride the SDK closed-set parity
-follow-up and are not declared in the manifest until the linter accepts them
-(CTX-1220).
+modules hide (fail closed). Those heads are declared in the manifest since
+the SDK#152 closed-set parity (CTX-1226); the matching `[services.required]`
+entries supply the host negotiation versions.
 
 ### Known host gaps
 

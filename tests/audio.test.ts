@@ -220,6 +220,32 @@ describe("spectrum glyphs and smoothing (pure)", () => {
       0.8, 0.9,
     ]);
   });
+
+  test("out-of-range bucket counts sample as absent (fail closed)", () => {
+    expect(mod["spectrum_sample"](99) ?? undefined).toBeUndefined();
+    expect(mod["spectrum_sample"](0) ?? undefined).toBeUndefined();
+  });
+
+  test("a paused meter freezes the last row without polling (pure)", async () => {
+    // The `paused` option table is inert through v1 settings integration, so
+    // the freeze branch is proven here: with a seeded last row, a paused
+    // render returns it without touching any provider.
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const text = await lua.doString(
+        "local M = (function()\n" +
+          ENTRY_SOURCE +
+          "\nend)()\n" +
+          'M._spectrum_last_text = "frozen"\n' +
+          "local atoms = M.spectrum_atoms({ options = { paused = true } })\n" +
+          "return atoms[1].text",
+      );
+      expect(text).toBe("frozen");
+    } finally {
+      lua.global.close();
+    }
+  });
 });
 
 describe("audio module registry and cadence (pure)", () => {
@@ -393,7 +419,10 @@ describe("spectrum cava-lite meter (broker stubs)", () => {
     expect(painted(run)).toBe(" ▄█");
   });
 
-  test("a paused meter freezes the last row without polling", async () => {
+  test("an unpaused meter re-polls every 250 ms (pause inert under v1)", async () => {
+    // The `paused` option table reads as [] under the v1 declared-keys gate
+    // (see bitty-plugin.toml), so the meter polls on its default cadence.
+    // The freeze logic itself stays covered by the pure suite below.
     const run = await bar({
       workspaces: THREE,
       settings: { modules_left: ["spectrum"], spectrum: { paused: true } },
@@ -403,7 +432,7 @@ describe("spectrum cava-lite meter (broker stubs)", () => {
     expect(run.audioSpectrumCalls()).toBe(1);
     run.host.advanceTimers(250);
     expect(painted(run)).toBe("███");
-    expect(run.audioSpectrumCalls()).toBe(1);
+    expect(run.audioSpectrumCalls()).toBe(2);
   });
 });
 

@@ -57,25 +57,21 @@ describe("declarative module list", () => {
   });
 
   test("modules_left order drives render order", async () => {
+    // v1 settings carry no per-module option tables (see bitty-plugin.toml),
+    // so the clock renders its default `%H:%M` text; order still drives paint.
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock", "workspaces"],
-        clock: { format: "T" },
-      },
+      settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(painted(run)).toBe("T 1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toMatch(/^\d\d:\d\d 1:ws1 4:code\* 9:logs \(3\)$/);
   });
 
   test("reordering the settings reorders the render", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["workspaces", "clock"],
-        clock: { format: "T" },
-      },
+      settings: { modules_left: ["workspaces", "clock"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) T");
+    expect(painted(run)).toMatch(/^1:ws1 4:code\* 9:logs \(3\) \d\d:\d\d$/);
   });
 
   test("modules_right renders after the left group", async () => {
@@ -84,10 +80,9 @@ describe("declarative module list", () => {
       settings: {
         modules_left: ["workspaces"],
         modules_right: ["clock"],
-        clock: { format: "T" },
       },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) T");
+    expect(painted(run)).toMatch(/^1:ws1 4:code\* 9:logs \(3\) \d\d:\d\d$/);
   });
 
   test("modules_center keeps its declared position (true centering is Phase C)", async () => {
@@ -96,10 +91,9 @@ describe("declarative module list", () => {
       settings: {
         modules_left: ["clock"],
         modules_center: ["workspaces"],
-        clock: { format: "T" },
       },
     });
-    expect(painted(run)).toBe("T 1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toMatch(/^\d\d:\d\d 1:ws1 4:code\* 9:logs \(3\)$/);
   });
 
   test("unknown module names are skipped", async () => {
@@ -126,21 +120,37 @@ describe("declarative module list", () => {
     expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
   });
 
-  test("non-name entries are skipped, the rest still render", async () => {
+  test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
+    // A non-string list item mismatches the declared string-array kind, so
+    // the whole key reads as its shipped default (v1 strict fail-to-default,
+    // mirroring the host): the bar falls back to the default plan instead of
+    // skipping one entry. Entry-level skipping itself stays covered purely
+    // below and lights up unchanged when table settings land.
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: [42, "clock"], clock: { format: "T" } },
+      settings: { modules_left: [42, "clock"] },
     });
-    expect(painted(run)).toBe("T");
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as Record<
+        string,
+        (...args: unknown[]) => unknown
+      >;
+      expect(await mod["entry_module"](42)).toBeNil();
+      expect(await mod["entry_module"]("clock")).toBe("clock");
+      expect(await mod["entry_module"]({ module: "cpu" })).toBe("cpu");
+    } finally {
+      lua.global.close();
+    }
   });
 
   test("any module count still mounts exactly one band", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock", "workspaces"],
-        clock: { format: "T" },
-      },
+      settings: { modules_left: ["clock", "workspaces"] },
     });
     expect(run.mounts.length).toBe(1);
   });
@@ -148,14 +158,12 @@ describe("declarative module list", () => {
 
 describe("per-module cadence (timer modules)", () => {
   test("a timer module re-renders once on its tick", async () => {
+    // Default clock cadence is 60000 ms; per-module tick_ms tables are inert
+    // under v1 settings (see bitty-plugin.toml), so the default arms here.
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock", "workspaces"],
-        clock: { format: "T", tick_ms: 60000 },
-      },
+      settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(painted(run)).toBe("T 1:ws1 4:code* 9:logs (3)");
     expect(run.updates()).toBe(0);
 
     run.host.advanceTimers(60000);
@@ -166,10 +174,7 @@ describe("per-module cadence (timer modules)", () => {
   test("v1 one-shot timers stay under the rate policy (no re-arm violation)", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock"],
-        clock: { format: "T", tick_ms: 60000 },
-      },
+      settings: { modules_left: ["clock"] },
     });
     run.host.advanceTimers(60000);
     expect(run.updates()).toBe(1);
@@ -180,25 +185,45 @@ describe("per-module cadence (timer modules)", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("tick_ms is clamped to the rate-policy floor", async () => {
-    const run = await bar({
-      workspaces: THREE,
-      settings: { modules_left: ["clock"], clock: { format: "T", tick_ms: 1 } },
-    });
-    run.host.advanceTimers(199);
-    expect(run.updates()).toBe(0);
-    run.host.advanceTimers(1);
-    expect(run.updates()).toBe(1);
+  test("tick_ms overrides clamp to the floors (pure cadence math)", async () => {
+    // Integration cadences above arm the module defaults (tick_ms tables are
+    // inert under v1 settings); the override/clamp math itself is pure and
+    // covered here so it lights up unchanged when table settings land.
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    const mod = (await lua.doString(ENTRY_SOURCE)) as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
+    try {
+      const tickMs = mod["tick_ms"] as (
+        def: unknown,
+        options: unknown,
+      ) => unknown;
+      // No override: the module default wins.
+      expect(await tickMs({ tick_ms: 60000 }, {})).toBe(60000);
+      // Overrides below the chassis floor clamp to 200 ms.
+      expect(await tickMs({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(200);
+      // Device modules name a stricter provider floor (3 s network).
+      expect(await tickMs({ tick_ms: 3000, tick_floor_ms: 3000 }, {})).toBe(
+        3000,
+      );
+      expect(
+        await tickMs({ tick_ms: 3000, tick_floor_ms: 3000 }, { tick_ms: 1 }),
+      ).toBe(3000);
+      // Overrides above the floor apply.
+      expect(await tickMs({ tick_ms: 2000 }, { tick_ms: 5000 })).toBe(5000);
+      // Event modules have no cadence.
+      expect(await tickMs({ kind: "event" }, {})).toBeNil();
+    } finally {
+      lua.global.close();
+    }
   });
 
   test("a hidden bar pauses timer modules (pause-on-hidden)", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        show: false,
-        modules_left: ["clock"],
-        clock: { format: "T" },
-      },
+      settings: { show: false, modules_left: ["clock"] },
     });
     run.host.advanceTimers(60000);
     expect(run.updates()).toBe(0);
@@ -214,38 +239,53 @@ describe("per-module cadence (timer modules)", () => {
 });
 
 describe("tooltip→notify fallback", () => {
+  // Per-module tooltip tables are inert under v1 settings (see
+  // bitty-plugin.toml), so the fallback is proven through the cpu default
+  // detail text, which every sensor atom carries without any option.
+  const CPU_SNAP = {
+    total_pct: 42.4,
+    per_core: [50, 30],
+    stale_age_ms: 0,
+  };
+  const CPU_GRANTS = [
+    "ui.rich",
+    "workspace.read",
+    "workspace.control",
+    "platform.notify",
+    "platform.cpu-read",
+    "platform.memory-read",
+    "platform.battery-read",
+  ] as const;
+
   test("a module tooltip binds the detail command and shows a notification", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock"],
-        clock: { format: "T", tooltip: "full date" },
-      },
+      settings: { modules_left: ["cpu"] },
+      grants: [...CPU_GRANTS],
+      services: { "system.cpu": { snapshot: CPU_SNAP } },
     });
     const node = leaves(run.component())[0]!;
     expect(node.on_click).toEqual({
       command: DETAIL_COMMAND,
-      args: { text: "full date" },
+      args: { text: "CPU 42% (2 cores)" },
     });
     expect(
-      run.host.dispatchCommand(DETAIL_COMMAND, { text: "full date" }),
+      run.host.dispatchCommand(DETAIL_COMMAND, { text: "CPU 42% (2 cores)" }),
     ).toBe(true);
     expect(run.host.notifications).toEqual([
-      { title: "Unified Bar", body: "full date" },
+      { title: "Unified Bar", body: "CPU 42% (2 cores)" },
     ]);
   });
 
   test("without platform.notify the fallback fails closed", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: {
-        modules_left: ["clock"],
-        clock: { format: "T", tooltip: "full date" },
-      },
+      settings: { modules_left: ["cpu"] },
       grants: ["ui.rich", "workspace.read", "workspace.control"],
+      services: { "system.cpu": { snapshot: CPU_SNAP } },
     });
     expect(
-      run.host.dispatchCommand(DETAIL_COMMAND, { text: "full date" }),
+      run.host.dispatchCommand(DETAIL_COMMAND, { text: "CPU 42% (2 cores)" }),
     ).toBe(false);
     expect(run.host.notifications).toEqual([]);
     expect(run.host.handlerViolations).toEqual([]);
@@ -254,7 +294,7 @@ describe("tooltip→notify fallback", () => {
   test("a module without a tooltip is not clickable", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: ["clock"], clock: { format: "T" } },
+      settings: { modules_left: ["clock"] },
     });
     expect(leaves(run.component())[0]!.on_click).toBeUndefined();
   });
