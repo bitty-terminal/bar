@@ -39,9 +39,57 @@ or invalid values fall back to the default.
 | `edge`           | string  | `"bottom"` | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
 | `show_single`    | boolean | `false`    | none (Core always hid it)   | Live on `config.reloaded`.              |
 | `name_max_chars` | integer | `32`       | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+| `modules_left`   | array   | `["workspaces"]` | none                 | Ordered module names; live.             |
+| `modules_center` | array   | `[]`       | none                        | Rendered after left; live.              |
+| `modules_right`  | array   | `[]`       | none                        | Rendered after center; live.            |
 
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
+
+### Modules (declarative)
+
+Settings declare an ordered module list, modeled on Waybar's
+`modules-left/center/right`. Phase A renders the three groups left-to-right into
+one inset row: a true center/right alignment needs a Spacer/flex node that v1
+does not expose (Phase C), so the groups keep their declarative order.
+
+Each listed name resolves against the in-plugin module registry. A module
+renders atoms `{ text, bold?, fg?, on_click?, tooltip? }` from local data or a
+broker-provided interface and refreshes on its own cadence:
+
+- `workspaces` (event module): the Core-parity pill strip; refreshes from the
+  `workspace.*` events — no timer where events suffice.
+- `clock` (timer module): `os.date` with a per-module `format` (a restricted,
+  zero-grant local source); refreshes on `tick_ms`.
+
+A bad spec never hides the bar: an unknown module name, a non-name entry, a
+non-list group, or a plan that resolves to nothing falls back to the default
+plan (`modules_left = ["workspaces"]`).
+
+Clicks dispatch **registered commands only** — `on-click` shell strings are not a
+vehicle and can never reach the scene. `on_click` binds a command id; a module
+with detail text but no command binds `bitty-terminal.bar:detail`, which shows
+the text as a notification (the v1 tooltip→notify fallback via
+`bitty.notify.show`).
+
+Per-module options live in a settings collection named after the module:
+
+| Module  | Option    | Type    | Default   | Notes                                             |
+| ------- | --------- | ------- | --------- | ------------------------------------------------- |
+| `clock` | `format`  | string  | `"%H:%M"` | `os.date` format.                                 |
+| `clock` | `tick_ms` | integer | `60000`   | Timer cadence, clamped to the `1000` ms floor.    |
+| `clock` | `tooltip` | string  | none      | Detail text shown via the `detail` notification.  |
+
+A JSON settings array/object crosses the bridge into Lua as an indexable value
+(not a plain table), so module lists and per-module options are read through that
+indexable surface.
+
+**Cadence (Phase A).** `bitty.timers.create` is one-shot and creation is valid
+only during activation (ADR 0009 LUA-OQ-12). The chassis arms exactly one timer
+per timer module at the module cadence (clamped to the rate-policy floor) and
+re-arms after a tick; on a host without repeating timers the re-arm fails closed,
+so a tick fires once and no handler violation is recorded. The arm path needs no
+bar change when repeating timers land. Hidden bars arm nothing (pause-on-hidden).
 
 ### Scratchpad indicator
 
@@ -71,8 +119,10 @@ the Core workspaceline text exactly.
 ### Capabilities
 
 `ui.rich` (mount and update the band), `workspace.read` (`list` and the
-`workspace.*` events), and `workspace.control` (`focus` for clicks). Without
-`workspace.control` the bar still renders and clicks fail closed.
+`workspace.*` events), `workspace.control` (`focus` for clicks), and
+`platform.notify` (the tooltip→notify `detail` fallback). Without
+`workspace.control` the bar still renders and pill clicks fail closed; without
+`platform.notify` the detail fallback fails closed.
 
 ### Known host gaps
 
@@ -100,6 +150,7 @@ Gaps in the current host, not in this plugin:
 | `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.       |
 | `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).        |
 | `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                          |
+| `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
 | `justfile`                    | Quality gates with pinned tool versions.                                   |
 
 ## Development
