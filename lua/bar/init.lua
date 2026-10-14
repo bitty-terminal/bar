@@ -18,12 +18,14 @@
 -- module is a registry entry `{ name, kind, tick_ms, events, render(data) }`
 -- that renders atoms from local data or a broker interface on its own cadence.
 -- Clicks dispatch registered commands only and never shell out. Phase B
--- adds the first system modules (device modules `network`, `bluetooth`,
--- `backlight`, `idle` plus sensor modules cpu/memory/battery over broker
--- `owner:iface@version` providers) in the same registry below; true
--- centering (`modules_center`), scroll bindings, real tooltips, and the
--- tray need new Core vehicles and are Phase C. No new Core API is
--- introduced here.
+-- adds the first system modules over broker `owner:iface@version`
+-- providers: the device modules (`network`, `bluetooth`, `backlight`,
+-- `idle`), the sensor modules (cpu/memory/battery), and the audio pair
+-- (`pulseaudio` state/control plus the `spectrum` cava-lite meter), each
+-- registering here unchanged when a provider lands. Wheel steps ride
+-- the `on_scroll` vehicle (bitty#2008, CTX-1190, host-computed `delta`);
+-- true centering (`modules_center`), real tooltips, and the tray need new
+-- Core vehicles and are Phase C. No new Core API is introduced here.
 --
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
@@ -40,6 +42,8 @@ local DETAIL_COMMAND_ID = "detail"
 local BLUETOOTH_TOGGLE_COMMAND_ID = "bluetooth-toggle"
 local BACKLIGHT_STEP_COMMAND_ID = "backlight-step"
 local IDLE_TOGGLE_COMMAND_ID = "idle-toggle"
+local AUDIO_TOGGLE_COMMAND_ID = "audio-toggle"
+local AUDIO_STEP_COMMAND_ID = "audio-step"
 M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
 -- Tooltip-without-command fallback: the click shows the module's detail text
 -- as a notification (`bitty.notify.show`) because v1 has no tooltip vehicle.
@@ -49,6 +53,10 @@ M.DETAIL_COMMAND = PLUGIN_ID .. ":" .. DETAIL_COMMAND_ID
 M.BLUETOOTH_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. BLUETOOTH_TOGGLE_COMMAND_ID
 M.BACKLIGHT_STEP_COMMAND = PLUGIN_ID .. ":" .. BACKLIGHT_STEP_COMMAND_ID
 M.IDLE_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. IDLE_TOGGLE_COMMAND_ID
+-- Audio control targets (CTX-1220, bitty#2013): click mutes, wheel steps the
+-- volume. Both dispatch registered commands only and never shell out.
+M.AUDIO_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. AUDIO_TOGGLE_COMMAND_ID
+M.AUDIO_STEP_COMMAND = PLUGIN_ID .. ":" .. AUDIO_STEP_COMMAND_ID
 
 -- Bounds mirrored from the retired Core workspaceline so the retirement is
 -- behavior-preserving (bitty@55f9d336 `crates/bitty-runtime/src/runtime/workspaces.rs`).
@@ -78,8 +86,11 @@ M.MODULE_GAP = " "
 -- creation is activation-window-only (ADR 0009 LUA-OQ-12), so a repeating
 -- per-module cadence is a 1.x addition; the floor keeps any single tick well
 -- inside the host timer rate policy, and the arm path re-arms optimistically
--- so a host with repeating timers needs no bar change.
-M.MIN_TICK_MS = 1000
+-- so a host with repeating timers needs no bar change. The floor is the
+-- fastest allowed provider poll: the audio spectrum 5 Hz ceiling (200 ms,
+-- bitty#2013 contract `SPECTRUM_MIN_INTERVAL_MS`); slower modules (state
+-- 2 s, clock 60 s) stay above it, and over-poll coalesces host-side.
+M.MIN_TICK_MS = 200
 
 -- Scratchpad indicator (W-104 R2-consumer, DEC-W104-1): the window scratchpad
 -- slot is window-global (at most one parked panel), so every row of one
@@ -144,6 +155,62 @@ M.STATE_TOKENS = {
   warning = "warning",
   critical = "critical",
 }
+
+-- Audio provider contract (CTX-1220, bitty#2013; bitty PRs #2058/#2071 are
+-- read-only here). Interfaces served by the native `bitty-terminal.audio`
+-- provider: `audio.state@1.0.0` (`get()`), `audio.control@1.0.0`
+-- (`set_volume`/`toggle_mute`), `audio.spectrum@1.0.0` (`spectrum`).
+-- Rate: state 2 s, spectrum 5 Hz / <=32 buckets / <=1 KiB, control 10 Hz
+-- coalesced (over-poll serves last-good host-side, never floods the VM).
+-- Scopes: fixed-`pactl`-argv monitor, no shell (host-side; Lua never spawns
+-- and never touches `wpctl`). Fail-closed: an absent monitor hides the module
+-- (never zeros, never fabrication). Manifest heads (`audio.state.read`,
+-- `audio.state.control`, `audio.spectrum`) ride the SDK closed-set parity
+-- follow-up; until granted, the optional negotiation below resolves nil and
+-- the modules hide, which is the same fail-closed posture.
+M.AUDIO_STATE_IFACE = "audio.state"
+M.AUDIO_CONTROL_IFACE = "audio.control"
+M.AUDIO_SPECTRUM_IFACE = "audio.spectrum"
+M.AUDIO_VERSION_REQ = ">=1.0"
+-- State poll cadence: the 2 s read ceiling (`STATE_MIN_INTERVAL_MS`).
+M.AUDIO_TICK_MS = 2000
+-- Spectrum poll cadence: 4 fps cava-lite (250 ms), inside the 5 Hz ceiling.
+-- Full-rate 60 fps cava is explicitly out of scope (not a plugin-VM workload).
+M.SPECTRUM_TICK_MS = 250
+M.SPECTRUM_BUCKETS_DEFAULT = 8
+M.SPECTRUM_BUCKETS_MAX = 32 -- SPECTRUM_MAX_BUCKETS (response capped at 1 KiB)
+M.VOLUME_MAX_PCT = 100
+M.VOLUME_STEP_MAX_PCT = 10 -- VOLUME_STEP_MAX_PCT (over-bound denied, never clamped)
+M.AUDIO_PORT_MAX_BYTES = 64 -- AUDIO_MAX_PORT_BYTES (validation bound)
+-- Port display width (characters) when the text carries the port. The full
+-- port name stays in the tooltip for Phase C real tooltips.
+M.AUDIO_PORT_DISPLAY_CHARS = 16
+-- Volume icons (portable ASCII; Nerd-Font glyphs are a theme concern, not
+-- data). Thresholds mirror Waybar-style low/med/high bands.
+M.AUDIO_ICON_MUTED = "MUTE"
+M.AUDIO_ICON_LOW = "LO"
+M.AUDIO_ICON_MED = "MED"
+M.AUDIO_ICON_HIGH = "HI"
+-- Spectrum block glyphs (U+2581-U+2588) as byte escapes (no `utf8` library;
+-- the file stays in the Lua 5.1 grammar). Index 1 is silence (a space keeps
+-- the meter width stable); indexes 2-9 are one-eighth through full block.
+M.SPECTRUM_GLYPHS = {
+  " ",
+  "\226\150\129",
+  "\226\150\130",
+  "\226\150\131",
+  "\226\150\132",
+  "\226\150\133",
+  "\226\150\134",
+  "\226\150\135",
+  "\226\150\136",
+}
+-- Spectrum smoothing policy (pure Lua): instant attack, linear falloff per
+-- tick, and a slow peak decay. Peaks hold briefly so transients stay visible
+-- at 4 fps without a second row.
+M.SPECTRUM_FALLOFF = 0.15
+M.SPECTRUM_PEAK_DECAY = 0.05
+M.SPECTRUM_PEAK_HOLD_TICKS = 4
 
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
@@ -550,6 +617,324 @@ function M.resolve_service(iface)
     return nil
   end
   if type(svc) ~= "table" and type(svc) ~= "userdata" then
+    return nil
+  end
+  return svc
+end
+-- Whether an audio state snapshot is usable: `volume_pct` 0..100, `muted`
+-- boolean, `port` a non-empty string within the byte bound. Anything else
+-- (absent fields, out-of-range volume, over-long port) reads as unusable so
+-- the module hides instead of painting garbage.
+function M.audio_valid_snapshot(snap)
+  if type(snap) ~= "table" and type(snap) ~= "userdata" then
+    return false
+  end
+  local ok, valid = pcall(function()
+    local vol = snap.volume_pct
+    if not is_integer(vol) or vol < 0 or vol > M.VOLUME_MAX_PCT then
+      return false
+    end
+    if type(snap.muted) ~= "boolean" then
+      return false
+    end
+    local port = snap.port
+    if type(port) ~= "string" or port == "" or #port > M.AUDIO_PORT_MAX_BYTES then
+      return false
+    end
+    return true
+  end)
+  return ok and valid == true
+end
+
+-- Volume icon for a validated snapshot: muted (or parked at zero) reads
+-- `MUTE`; otherwise low/med/high bands. Pure; thresholds are presentation
+-- policy and live entirely Lua-side.
+function M.audio_icon(snap)
+  if snap.muted == true or snap.volume_pct == 0 then
+    return M.AUDIO_ICON_MUTED
+  end
+  if snap.volume_pct < 34 then
+    return M.AUDIO_ICON_LOW
+  end
+  if snap.volume_pct < 67 then
+    return M.AUDIO_ICON_MED
+  end
+  return M.AUDIO_ICON_HIGH
+end
+
+-- Audio module text: `{icon} {volume}%` plus `:{port}` when `show_port` is
+-- set (default true; the port is truncated to `port_max_chars`). A `format`
+-- option overrides the shape via the bounded `{key}` template with keys
+-- `icon`, `volume`, `port`, and `muted`. Fail closed to "" on a bad snapshot.
+function M.audio_text(snap, options)
+  if not M.audio_valid_snapshot(snap) then
+    return ""
+  end
+  options = options or {}
+  local port_chars = M.AUDIO_PORT_DISPLAY_CHARS
+  if is_integer(options.port_max_chars) and options.port_max_chars >= 1
+    and options.port_max_chars <= M.AUDIO_PORT_MAX_BYTES then
+    port_chars = options.port_max_chars
+  end
+  local port_short = M.truncate_chars(snap.port, port_chars)
+  local data = {
+    icon = M.audio_icon(snap),
+    volume = tostring(snap.volume_pct),
+    port = port_short,
+    muted = tostring(snap.muted),
+  }
+  if type(options.format) == "string" and options.format ~= "" then
+    return M.render_template(options.format, data, M.TEMPLATE_MAX_BYTES)
+  end
+  local show_port = options.show_port
+  if show_port == nil then
+    show_port = true
+  end
+  local text = data.icon .. " " .. data.volume .. "%"
+  if show_port == true then
+    text = text .. ":" .. port_short
+  end
+  return text
+end
+
+-- Audio tooltip: the full port name (untruncated display goes to the text).
+-- Nil when there is no usable snapshot.
+function M.audio_tooltip(snap)
+  if not M.audio_valid_snapshot(snap) then
+    return nil
+  end
+  return snap.port
+end
+
+-- Coalesces one wheel/scroll delta into a bounded integer volume step, or nil
+-- when there is nothing to do. The host injects `delta` as signed lines
+-- (positive for wheel-up); fractional sub-line ticks floor to a no-op and
+-- bursts clamp to one step (saturating, never widened). Mirrors the host
+-- `ControlGate` burst discipline Lua-side so a 100-tick burst drains as one
+-- bounded `set_volume({ delta })` call. NaN and infinities are rejected.
+function M.volume_step(delta)
+  if type(delta) ~= "number" then
+    return nil
+  end
+  if delta ~= delta then
+    return nil
+  end
+  if delta == math.huge or delta == -math.huge then
+    return nil
+  end
+  local step = math.floor(math.abs(delta))
+  if delta < 0 then
+    step = -step
+  end
+  if step == 0 then
+    return nil
+  end
+  if step > M.VOLUME_STEP_MAX_PCT then
+    step = M.VOLUME_STEP_MAX_PCT
+  end
+  if step < -M.VOLUME_STEP_MAX_PCT then
+    step = -M.VOLUME_STEP_MAX_PCT
+  end
+  return step
+end
+
+-- Block glyph for one spectrum level in 0..1 (clamped). Out-of-range values
+-- clamp to the rails; non-numbers read as silence so one bad tap never hides
+-- the meter.
+function M.spectrum_glyph(level)
+  if type(level) ~= "number" or level ~= level then
+    return M.SPECTRUM_GLYPHS[1]
+  end
+  if level < 0 then
+    level = 0
+  end
+  if level > 1 then
+    level = 1
+  end
+  local index = math.floor(level * 8) + 1
+  return M.SPECTRUM_GLYPHS[index]
+end
+
+-- Spectrum meter text: one glyph per bucket, bounded to 32 buckets (96 bytes
+-- worst case, well inside the 1 KiB response cap and the line bound).
+-- Non-collection or empty input reads as "" (the caller hides the module).
+function M.spectrum_text(levels)
+  if not is_collection(levels) then
+    return ""
+  end
+  local count = list_len(levels)
+  if count < 1 then
+    return ""
+  end
+  if count > M.SPECTRUM_BUCKETS_MAX then
+    count = M.SPECTRUM_BUCKETS_MAX
+  end
+  local out = {}
+  for index = 1, count do
+    local ok, level = pcall(function()
+      return levels[index]
+    end)
+    if ok then
+      out[#out + 1] = M.spectrum_glyph(level)
+    else
+      out[#out + 1] = M.SPECTRUM_GLYPHS[1]
+    end
+  end
+  return table.concat(out)
+end
+
+-- One smoothing step (pure): instant attack on rising taps, linear falloff on
+-- falling ones. A nil/empty previous state adopts the new levels. Lengths
+-- follow the new sample (the provider owns the bucket count); missing entries
+-- read as silence.
+function M.spectrum_falloff(prev_levels, new_levels)
+  local count = list_len(new_levels)
+  if count < 1 then
+    return {}
+  end
+  if count > M.SPECTRUM_BUCKETS_MAX then
+    count = M.SPECTRUM_BUCKETS_MAX
+  end
+  local prev_count = list_len(prev_levels)
+  local out = {}
+  for index = 1, count do
+    local target = new_levels[index]
+    if type(target) ~= "number" or target ~= target then
+      target = 0
+    end
+    if target < 0 then
+      target = 0
+    end
+    if target > 1 then
+      target = 1
+    end
+    local prev = 0
+    if prev_levels ~= nil and index <= prev_count then
+      local raw = prev_levels[index]
+      if type(raw) == "number" and raw == raw then
+        prev = math.min(1, math.max(0, raw))
+      end
+    end
+    if target >= prev then
+      out[index] = target
+    else
+      local decayed = prev - M.SPECTRUM_FALLOFF
+      if decayed < target then
+        decayed = target
+      end
+      out[index] = decayed
+    end
+  end
+  return out
+end
+
+-- One peak-hold step (pure): each peak holds for `M.SPECTRUM_PEAK_HOLD_TICKS`
+-- renders, then decays at `M.SPECTRUM_PEAK_DECAY` per tick. The previous
+-- state rides two parallel arrays (`prev_levels`, `prev_hold`; either may be
+-- nil to adopt the current levels with a fresh hold) so every argument stays
+-- a flat level array. Returns the next peak state as
+-- `{ levels = {...}, hold = {...} }`; the caller renders `max(smoothed, peak)`
+-- per bucket so transients hold briefly at 4 fps.
+function M.spectrum_peak_step(prev_levels, prev_hold, levels)
+  local count = list_len(levels)
+  if count < 1 then
+    return { levels = {}, hold = {} }
+  end
+  if count > M.SPECTRUM_BUCKETS_MAX then
+    count = M.SPECTRUM_BUCKETS_MAX
+  end
+  local prev_level_count = list_len(prev_levels)
+  local prev_hold_count = list_len(prev_hold)
+  local out_levels = {}
+  local out_hold = {}
+  for index = 1, count do
+    local level = levels[index]
+    if type(level) ~= "number" or level ~= level then
+      level = 0
+    end
+    level = math.min(1, math.max(0, level))
+    local held_level = 0
+    local held_ticks = 0
+    if index <= prev_level_count then
+      local raw_ok, raw = pcall(function()
+        return prev_levels[index]
+      end)
+      if raw_ok and type(raw) == "number" and raw == raw then
+        held_level = math.min(1, math.max(0, raw))
+      end
+    end
+    if index <= prev_hold_count then
+      local hold_ok, raw_hold = pcall(function()
+        return prev_hold[index]
+      end)
+      if hold_ok and type(raw_hold) == "number" and raw_hold > 0 then
+        held_ticks = math.floor(raw_hold)
+      end
+    end
+    if level >= held_level then
+      out_levels[index] = level
+      out_hold[index] = M.SPECTRUM_PEAK_HOLD_TICKS
+    elseif held_ticks > 0 then
+      out_levels[index] = held_level
+      out_hold[index] = held_ticks - 1
+    else
+      local decayed = held_level - M.SPECTRUM_PEAK_DECAY
+      if decayed < level then
+        decayed = level
+      end
+      out_levels[index] = decayed
+      out_hold[index] = 0
+    end
+  end
+  return { levels = out_levels, hold = out_hold }
+end
+
+-- Meter row with peak-hold applied (pure): per-bucket `max(smoothed, peak)`.
+-- Both inputs are plain level arrays; a missing side reads as silence.
+function M.spectrum_with_peaks(smoothed, peaks)
+  local count = list_len(smoothed)
+  local peak_count = list_len(peaks)
+  if count < 1 then
+    return {}
+  end
+  if count > M.SPECTRUM_BUCKETS_MAX then
+    count = M.SPECTRUM_BUCKETS_MAX
+  end
+  local out = {}
+  for index = 1, count do
+    local base = smoothed[index]
+    if type(base) ~= "number" or base ~= base then
+      base = 0
+    end
+    local peak = 0
+    if index <= peak_count then
+      local raw = peaks[index]
+      if type(raw) == "number" and raw == raw then
+        peak = raw
+      end
+    end
+    if peak > base then
+      out[index] = peak
+    else
+      out[index] = base
+    end
+  end
+  return out
+end
+
+-- Broker negotiation (optional, fail-closed): resolves one audio interface at
+-- `M.AUDIO_VERSION_REQ`, or nil when the provider is absent, the version
+-- mismatches, or the head is ungranted. Every caller wraps this in `pcall`,
+-- so a throwing bridge reads the same as an absent one (hidden, never loud).
+local function audio_service(iface)
+  if bitty == nil or bitty.services == nil or bitty.services.get == nil then
+    return nil
+  end
+  local ok, svc = pcall(bitty.services.get, iface, {
+    version = M.AUDIO_VERSION_REQ,
+    optional = true,
+  })
+  if not ok or svc == nil then
     return nil
   end
   return svc
@@ -1291,14 +1676,204 @@ function M.battery_atoms(ctx)
   return { atom }
 end
 
+-- Whether the control head resolves (click/scroll bindings only). Read-only
+-- render carries no command when this is nil.
+function M.audio_control_present()
+  return audio_service(M.AUDIO_CONTROL_IFACE) ~= nil
+end
+
+-- One validated state snapshot, or nil when the monitor is absent or the
+-- sample fails validation (fail closed to hidden).
+function M.audio_snapshot()
+  local svc = audio_service(M.AUDIO_STATE_IFACE)
+  if svc == nil or svc.get == nil then
+    return nil
+  end
+  local ok, snap = pcall(svc.get)
+  if not ok or not M.audio_valid_snapshot(snap) then
+    return nil
+  end
+  return snap
+end
+
+-- One validated spectrum sample (`levels` array, 1..32 finite taps), or nil
+-- when the meter is absent or the sample is malformed. `buckets` out of range
+-- reads as nil (the render falls back to the default count instead).
+function M.spectrum_sample(buckets)
+  if buckets == nil then
+    buckets = M.SPECTRUM_BUCKETS_DEFAULT
+  end
+  if not is_integer(buckets) or buckets < 1 or buckets > M.SPECTRUM_BUCKETS_MAX then
+    return nil
+  end
+  local svc = audio_service(M.AUDIO_SPECTRUM_IFACE)
+  if svc == nil or svc.spectrum == nil then
+    return nil
+  end
+  local ok, res = pcall(svc.spectrum, { buckets = buckets })
+  if not ok or (type(res) ~= "table" and type(res) ~= "userdata") then
+    return nil
+  end
+  local levels
+  local levels_ok = pcall(function()
+    levels = res.levels
+  end)
+  if not levels_ok or not is_collection(levels) then
+    return nil
+  end
+  local count = list_len(levels)
+  if count < 1 or count > M.SPECTRUM_BUCKETS_MAX then
+    return nil
+  end
+  for index = 1, count do
+    local tap_ok, tap = pcall(function()
+      return levels[index]
+    end)
+    if not tap_ok or type(tap) ~= "number" or tap ~= tap then
+      return nil
+    end
+  end
+  return levels
+end
+
+-- Toggle mute through the control head. Returns true on an admitted call,
+-- false when the head is absent, denied, or rate-limited (fail closed; the
+-- caller re-polls `get()` for the new level on success).
+function M.audio_toggle()
+  local svc = audio_service(M.AUDIO_CONTROL_IFACE)
+  if svc == nil or svc.toggle_mute == nil then
+    return false
+  end
+  local ok = pcall(svc.toggle_mute, {})
+  return ok == true
+end
+
+-- Step the volume through the control head. `delta` is the host-computed
+-- scroll `delta` (signed lines) or any caller number; bursts clamp to one
+-- bounded step and sub-line fractions are a no-op. Returns true on an
+-- admitted call, false otherwise (fail closed, never clamped past ±10).
+function M.audio_step(delta)
+  local step = M.volume_step(delta)
+  if step == nil then
+    return false
+  end
+  local svc = audio_service(M.AUDIO_CONTROL_IFACE)
+  if svc == nil or svc.set_volume == nil then
+    return false
+  end
+  local ok = pcall(svc.set_volume, { delta = step })
+  return ok == true
+end
+
+-- PulseAudio module render: one atom from the state snapshot, or {} when the
+-- monitor is absent (fail closed to hidden). Click mutes and wheel steps only
+-- when the control head resolves; otherwise the atom is read-only text with
+-- the port tooltip (a tooltip beside a command would need a Phase C vehicle,
+-- so the clickable atom carries the port in its text instead).
+function M.pulseaudio_atoms(ctx)
+  local snap = M.audio_snapshot()
+  if snap == nil then
+    return {}
+  end
+  local options = nil
+  if ctx ~= nil then
+    options = ctx.options
+  end
+  local text = M.audio_text(snap, options)
+  if text == "" then
+    return {}
+  end
+  local atom = { text = text }
+  local tooltip = M.audio_tooltip(snap)
+  if tooltip ~= nil then
+    atom.tooltip = tooltip
+  end
+  if M.audio_control_present() then
+    atom.on_click = M.click_binding(M.AUDIO_TOGGLE_COMMAND, {})
+    atom.on_scroll = M.click_binding(M.AUDIO_STEP_COMMAND, {})
+  end
+  return { atom }
+end
+
+-- Module-local spectrum display state (per activation generation): the last
+-- smoothed row, the parallel peak-hold arrays, and the last painted text
+-- (for pause).
+M._spectrum_prev = nil
+M._spectrum_peak_levels = nil
+M._spectrum_peak_hold = nil
+M._spectrum_last_text = nil
+
+-- Spectrum module render: one meter atom from the live sample with falloff
+-- and peak-hold applied, or {} when the meter is absent (hidden until a live
+-- source lands host-side). `options.buckets` (1..32, default 8) sizes the
+-- sample; out-of-range counts fall back to the default. `options.paused`
+-- freezes the last row without polling.
+function M.spectrum_atoms(ctx)
+  local options = nil
+  if ctx ~= nil then
+    options = ctx.options
+  end
+  if type(options) ~= "table" and type(options) ~= "userdata" then
+    options = {}
+  end
+  local paused = false
+  local paused_ok, paused_raw = pcall(function()
+    return options.paused
+  end)
+  if paused_ok and paused_raw == true then
+    paused = true
+  end
+  if paused and M._spectrum_last_text ~= nil then
+    return { { text = M._spectrum_last_text } }
+  end
+  local buckets = M.SPECTRUM_BUCKETS_DEFAULT
+  local buckets_ok, buckets_raw = pcall(function()
+    return options.buckets
+  end)
+  if buckets_ok and is_integer(buckets_raw)
+    and buckets_raw >= 1 and buckets_raw <= M.SPECTRUM_BUCKETS_MAX then
+    buckets = buckets_raw
+  end
+  local levels = M.spectrum_sample(buckets)
+  if levels == nil then
+    return {}
+  end
+  local smoothed = M.spectrum_falloff(M._spectrum_prev, levels)
+  M._spectrum_prev = smoothed
+  local peaks = M.spectrum_peak_step(
+    M._spectrum_peak_levels,
+    M._spectrum_peak_hold,
+    smoothed
+  )
+  M._spectrum_peak_levels = peaks.levels
+  M._spectrum_peak_hold = peaks.hold
+  local row = M.spectrum_with_peaks(smoothed, peaks.levels)
+  local text = M.spectrum_text(row)
+  if text == "" then
+    return {}
+  end
+  M._spectrum_last_text = text
+  local atom = { text = text }
+  local tooltip_ok, tooltip_raw = pcall(function()
+    return options.tooltip
+  end)
+  if tooltip_ok and type(tooltip_raw) == "string" and tooltip_raw ~= "" then
+    atom.tooltip = tooltip_raw
+  end
+  return { atom }
+end
+
 -- In-plugin module registry (bitty-plugins#86 Phase A chassis, Phase B
--- sensor modules). Each entry declares how it renders and how it refreshes:
+-- sensor and audio modules). Each entry declares how it renders and how it
+-- refreshes:
 --   name    : the settings name that selects it in a module group.
 --   kind    : "event" (refresh from events.subscribe) or "timer" (refresh on
 --             tick_ms).
 --   tick_ms : timer cadence for a "timer" module; nil for an event module.
 --   events  : event names the module refreshes from (event modules only).
 --   render  : render(ctx) -> atoms from local data or a broker interface.
+-- System modules (broker `owner:iface@version` providers) are Phase B and
+-- register here unchanged when a provider lands.
 M.MODULES = {}
 
 M.MODULES.workspaces = {
@@ -1372,6 +1947,36 @@ M.MODULES.idle = {
   option_keys = { "tick_ms", "tooltip", "on_text", "off_text" },
   render = function(ctx)
     return M.idle_atoms(ctx)
+  end,
+}
+-- PulseAudio state module (Phase B provider module, bitty#2013): volume,
+-- mute, and port from `audio.state@1.0.0` with icon selection Lua-side.
+-- Click mutes via `audio.control@1.0.0`; wheel steps the volume through the
+-- same head (bounded ±10, 10 Hz coalesced host-side). Read-only when the
+-- control head is ungranted (no click/scroll binding); hidden when the state
+-- monitor is absent (fail closed, never zeros).
+M.MODULES.pulseaudio = {
+  name = "pulseaudio",
+  kind = "timer",
+  tick_ms = M.AUDIO_TICK_MS,
+  option_keys = { "format", "tick_ms", "tooltip", "show_port", "port_max_chars" },
+  render = function(ctx)
+    return M.pulseaudio_atoms(ctx)
+  end,
+}
+
+-- Spectrum cava-lite meter (Phase B provider module, bitty#2013): block
+-- glyphs (U+2581-U+2588) in a Text node at 4 fps. Falloff smoothing and
+-- peak-hold run in Lua; `paused = true` freezes the last row. Hidden until a
+-- live spectrum source lands host-side (the `pactl` monitor exposes no level
+-- taps by design, so the meter hides rather than fabricates).
+M.MODULES.spectrum = {
+  name = "spectrum",
+  kind = "timer",
+  tick_ms = M.SPECTRUM_TICK_MS,
+  option_keys = { "buckets", "tick_ms", "tooltip", "paused" },
+  render = function(ctx)
+    return M.spectrum_atoms(ctx)
   end,
 }
 
@@ -1537,7 +2142,8 @@ function M.clip(atoms, max_bytes)
 end
 
 -- Scene node for one atom. A tooltip with no command binds the detail command
--- (tooltip→notify fallback); anything else stays non-interactive.
+-- (tooltip→notify fallback); anything else stays non-interactive. A scroll
+-- binding rides alongside (wheel steps never replace the click target).
 function M.atom_node(atom)
   local node = { kind = "Text", text = atom.text }
   if atom.bold == true then
@@ -1550,6 +2156,9 @@ function M.atom_node(atom)
     node.on_click = atom.on_click
   elseif atom.tooltip ~= nil then
     node.on_click = { command = M.DETAIL_COMMAND, args = { text = atom.tooltip } }
+  end
+  if atom.on_scroll ~= nil then
+    node.on_scroll = atom.on_scroll
   end
   return node
 end
@@ -1785,6 +2394,22 @@ bitty.commands.register({
   end,
 })
 
+-- Audio control commands (CTX-1220, bitty#2013): click mutes, wheel steps.
+-- Both fail closed (false) when the control head is absent, denied, or
+-- rate-limited; the bar re-polls `get()` for the new level on success.
+bitty.commands.register({
+  id = AUDIO_TOGGLE_COMMAND_ID,
+  title = "Unified Bar: toggle audio mute",
+  description = "Toggle the default sink mute through audio.control (pulseaudio module click target).",
+  args_schema = {
+    type = "object",
+    additionalProperties = false,
+  },
+  run = function(_args)
+    return M.audio_toggle()
+  end,
+})
+
 bitty.commands.register({
   id = BACKLIGHT_STEP_COMMAND_ID,
   title = "Unified Bar: step backlight brightness",
@@ -1850,6 +2475,30 @@ bitty.commands.register({
     end
     pcall(render)
     return true
+  end,
+})
+
+bitty.commands.register({
+  id = AUDIO_STEP_COMMAND_ID,
+  title = "Unified Bar: step audio volume",
+  description = "Step the default sink volume through audio.control (pulseaudio module wheel target; host-computed delta in signed lines).",
+  args_schema = {
+    type = "object",
+    properties = {
+      delta = { type = "number" },
+    },
+    required = { "delta" },
+    additionalProperties = false,
+  },
+  run = function(args)
+    local delta = nil
+    local ok, raw = pcall(function()
+      return args.delta
+    end)
+    if ok then
+      delta = raw
+    end
+    return M.audio_step(delta)
   end,
 })
 

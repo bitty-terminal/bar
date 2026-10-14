@@ -185,7 +185,7 @@ describe("per-module cadence (timer modules)", () => {
       workspaces: THREE,
       settings: { modules_left: ["clock"], clock: { format: "T", tick_ms: 1 } },
     });
-    run.host.advanceTimers(999);
+    run.host.advanceTimers(199);
     expect(run.updates()).toBe(0);
     run.host.advanceTimers(1);
     expect(run.updates()).toBe(1);
@@ -352,8 +352,9 @@ describe("pure chassis helpers", () => {
 
   test("tick_ms is nil for event modules and floor-clamped for timer modules", () => {
     expect(mod["tick_ms"]({ tick_ms: 60000 }, {})).toBe(60000);
-    expect(mod["tick_ms"]({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(1000);
-    expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 200 })).toBe(1000);
+    expect(mod["tick_ms"]({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(200);
+    expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 100 })).toBe(200);
+    expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 200 })).toBe(200);
     expect(mod["tick_ms"]({}) ?? null).toBeNull();
   });
 
@@ -378,7 +379,7 @@ describe("pure chassis helpers", () => {
     expect(fallback.map((spec) => spec.name)).toEqual(["workspaces"]);
   });
 
-  test("the module registry exposes workspaces, clock, and the Phase B modules", () => {
+  test("the module registry exposes workspaces, clock, and the Phase B device, sensor, and audio modules", () => {
     const modules = mod["MODULES"] as Record<string, { name: string }>;
     expect(Object.keys(modules).sort()).toEqual([
       "backlight",
@@ -389,6 +390,8 @@ describe("pure chassis helpers", () => {
       "idle",
       "memory",
       "network",
+      "pulseaudio",
+      "spectrum",
       "workspaces",
     ]);
     expect(modules["workspaces"]!.name).toBe("workspaces");
@@ -400,6 +403,8 @@ describe("pure chassis helpers", () => {
     expect(modules["cpu"]!.name).toBe("cpu");
     expect(modules["memory"]!.name).toBe("memory");
     expect(modules["battery"]!.name).toBe("battery");
+    expect(modules["pulseaudio"]!.name).toBe("pulseaudio");
+    expect(modules["spectrum"]!.name).toBe("spectrum");
   });
 
   test("tick floors keep device modules at their contract cadence", () => {

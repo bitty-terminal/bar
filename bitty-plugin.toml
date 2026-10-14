@@ -37,6 +37,10 @@ plugin-api = "^1.0"
 #   resolve their providers with `optional = true` and hide while ungranted.
 #   Request the read heads (plus each control head only for the toggle/step
 #   variants) once the SDK admits them; no Lua change is needed.
+# - Audio heads (`audio.state.read`, `audio.state.control`, `audio.spectrum`)
+#   ride the SDK closed-set parity follow-up: the modules negotiate the broker
+#   interfaces optionally and hide until granted, so no manifest entry is
+#   declared until the linter accepts the heads (CTX-1220).
 ui.rich = true
 workspace.read = true
 workspace.control = true
@@ -49,13 +53,17 @@ platform.notify = true
 # tooltip→notify fallback bound to a module's detail text; the
 # `bluetooth-toggle`, `backlight-step`, and `idle-toggle` commands are the
 # device-module control click targets (each calls exactly one control method
-# on its own control interface, never anything else).
+# on its own control interface, never anything else); `audio-toggle`
+# mutes via audio.control (pulseaudio click) and `audio-step` steps the
+# volume via audio.control (pulseaudio wheel, host-computed `delta`).
 commands = [
   "bitty-terminal.bar:focus",
   "bitty-terminal.bar:detail",
   "bitty-terminal.bar:bluetooth-toggle",
   "bitty-terminal.bar:backlight-step",
   "bitty-terminal.bar:idle-toggle",
+  "bitty-terminal.bar:audio-toggle",
+  "bitty-terminal.bar:audio-step",
 ]
 events = [
   "workspace.created",
