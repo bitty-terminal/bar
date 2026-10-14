@@ -54,8 +54,8 @@ one inset row: a true center/right alignment needs a Spacer/flex node that v1
 does not expose (Phase C), so the groups keep their declarative order.
 
 Each listed name resolves against the in-plugin module registry. A module
-renders atoms `{ text, bold?, fg?, on_click?, tooltip? }` from local data or a
-broker-provided interface and refreshes on its own cadence:
+renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip? }` from
+local data or a broker-provided interface and refreshes on its own cadence:
 
 - `workspaces` (event module): the Core-parity pill strip; refreshes from the
   `workspace.*` events — no timer where events suffice.
@@ -68,6 +68,19 @@ broker-provided interface and refreshes on its own cadence:
   `system.memory@1.0.0`; polls at the 2 s ceiling.
 - `battery` (timer module, Phase B): capacity and charge state from
   `system.battery@1.0.0`; polls at the 5 s ceiling.
+- `pulseaudio` (timer module, Phase B provider module): volume, mute, and port
+  from the `audio.state@1.0.0` broker interface with icon selection Lua-side;
+  polls at the 2 s state ceiling. Click toggles mute and wheel steps the
+  volume through `audio.control@1.0.0` (bounded ±10 steps, 10 Hz coalesced
+  host-side). Read-only text when the control head is ungranted; hidden when
+  the state monitor is absent (fail closed).
+- `spectrum` (timer module, Phase B provider module): the cava-lite meter —
+  block glyphs (U+2581-U+2588) in a Text node at 4 fps from the
+  `audio.spectrum@1.0.0` broker interface (<=32 buckets). Falloff smoothing
+  and peak-hold run in Lua; `paused = true` freezes the last row. Hidden until
+  a live spectrum source lands host-side (the `pactl` monitor exposes no level
+  taps by design, so the meter hides rather than fabricates; 60 fps cava stays
+  out of scope).
 
 A bad spec never hides the bar: an unknown module name, a non-name entry, a
 non-list group, or a plan that resolves to nothing falls back to the default
@@ -77,15 +90,27 @@ Clicks dispatch **registered commands only** — `on-click` shell strings are no
 vehicle and can never reach the scene. `on_click` binds a command id; a module
 with detail text but no command binds `bitty-terminal.bar:detail`, which shows
 the text as a notification (the v1 tooltip→notify fallback via
-`bitty.notify.show`).
+`bitty.notify.show`). Wheel steps bind `on_scroll` the same way: the host
+merges the declared args with the computed `delta` (signed lines, positive for
+wheel-up) and invokes `bitty-terminal.bar:audio-step`, which clamps the burst
+to one bounded volume step.
 
 Per-module options live in a settings collection named after the module:
 
-| Module  | Option    | Type    | Default   | Notes                                            |
-| ------- | --------- | ------- | --------- | ------------------------------------------------ |
-| `clock` | `format`  | string  | `"%H:%M"` | `os.date` format.                                |
-| `clock` | `tick_ms` | integer | `60000`   | Timer cadence, clamped to the `1000` ms floor.   |
-| `clock` | `tooltip` | string  | none      | Detail text shown via the `detail` notification. |
+| Module       | Option           | Type    | Default   | Notes                                                             |
+| ------------ | ---------------- | ------- | --------- | ----------------------------------------------------------------- |
+| `clock`      | `format`         | string  | `"%H:%M"` | `os.date` format.                                                 |
+| `clock`      | `tick_ms`        | integer | `60000`   | Timer cadence, clamped to the `200` ms floor.                     |
+| `clock`      | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
+| `pulseaudio` | `format`         | string  | none      | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
+| `pulseaudio` | `show_port`      | boolean | `true`    | Append the truncated port to the text.                            |
+| `pulseaudio` | `port_max_chars` | integer | `16`      | Port display width, `1..64`.                                      |
+| `pulseaudio` | `tick_ms`        | integer | `2000`    | State poll cadence, clamped to the `200` ms floor.                |
+| `pulseaudio` | `tooltip`        | string  | none      | Reserved for Phase C real tooltips (the port rides it today).     |
+| `spectrum`   | `buckets`        | integer | `8`       | Sample width, `1..32` (out-of-range falls back to `8`).           |
+| `spectrum`   | `tick_ms`        | integer | `250`     | Meter cadence (4 fps), clamped to the `200` ms floor.             |
+| `spectrum`   | `paused`         | boolean | `false`   | Freeze the last row without polling.                              |
+| `spectrum`   | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
 
 ### Modules (Phase B devices)
 
@@ -225,6 +250,13 @@ one control method on their own control interface and only while that
 interface resolves; a denied call degrades to a notification and never
 retries.
 
+The audio modules negotiate the `audio.state@1.0.0`, `audio.control@1.0.0`,
+and `audio.spectrum@1.0.0` broker interfaces optionally: without the
+`audio.state.read`, `audio.state.control`, and `audio.spectrum` heads the
+modules hide (fail closed). Those heads ride the SDK closed-set parity
+follow-up and are not declared in the manifest until the linter accepts them
+(CTX-1220).
+
 ### Known host gaps
 
 Gaps in the current host, not in this plugin:
@@ -253,6 +285,7 @@ Gaps in the current host, not in this plugin:
 | `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                            |
 | `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
 | `tests/devices.test.ts`       | Phase B device module tests (network, bluetooth, backlight, idle).           |
+| `tests/audio.test.ts`         | Audio module tests (pulseaudio state/control, spectrum meter, rate bounds).  |
 | `justfile`                    | Quality gates with pinned tool versions.                                     |
 
 ## Development

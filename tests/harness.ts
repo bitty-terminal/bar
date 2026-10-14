@@ -48,6 +48,10 @@ export interface SceneNode {
     readonly command: string;
     readonly args?: Readonly<Record<string, unknown>>;
   };
+  readonly on_scroll?: {
+    readonly command: string;
+    readonly args?: Readonly<Record<string, unknown>>;
+  };
 }
 
 export interface MountRecord {
@@ -93,7 +97,22 @@ export interface BarRun {
   component(): SceneNode;
   /** Number of `bitty.ui.update` calls the plugin issued on the block. */
   updates(): number;
+  /** Audio control calls the plugin issued through the stubbed broker. */
+  audioControl(): {
+    readonly toggles: number;
+    readonly steps: readonly unknown[];
+  };
+  /** Number of `audio.spectrum.spectrum()` calls the plugin issued. */
+  audioSpectrumCalls(): number;
   close(): void;
+}
+
+/** Audio state snapshot served by the stubbed `audio.state` broker. */
+export interface AudioStateFixture {
+  readonly volume_pct: number;
+  readonly muted: boolean;
+  readonly port: string;
+  readonly stale_age_ms?: number;
 }
 
 export interface BarRunOptions {
@@ -131,6 +150,12 @@ export interface BarRunOptions {
    * absent-provider hide path).
    */
   readonly services?: Readonly<Record<string, ServiceStub>>;
+  /** Present = stub `audio.state.get()` serves this; absent = no state provider. */
+  readonly audioState?: AudioStateFixture;
+  /** Present = stub `audio.spectrum.spectrum()` serves these levels; absent = no meter. */
+  readonly audioSpectrum?: readonly number[];
+  /** True = stub `audio.control` serves toggle/step and records calls. */
+  readonly audioControl?: boolean;
 }
 
 /** Plain service implementation: method name to function. */
@@ -268,11 +293,77 @@ export async function activateBar(
   const workspaceList = (
     bridged.workspace as { readonly list: () => WorkspaceInfo[] }
   ).list;
+  // Audio broker stubs (CTX-1220, bitty#2013): the pinned mock predates the
+  // native `bitty-terminal.audio` provider, so the harness stubs the three
+  // broker interfaces behind `bitty.services.get`. Absent fixtures resolve
+  // nil for the optional negotiation (fail-closed hide, exactly like an
+  // ungranted head on the real host). Control calls are recorded for the
+  // click/scroll dispatch tests.
+  const controlCalls: {
+    toggles: number;
+    steps: unknown[];
+    spectrum: number;
+  } = {
+    toggles: 0,
+    steps: [],
+    spectrum: 0,
+  };
+  const audioState = options.audioState;
+  const audioSpectrum = options.audioSpectrum;
+  const audioControl = options.audioControl === true;
   const mockServicesGet = (
     bridged.services as { readonly get: (...args: unknown[]) => unknown }
   ).get;
   const stubbed = options.services ?? {};
   const servicesGet = (iface: string, opts?: unknown): unknown => {
+    // Audio interfaces are served by the stubs above when their fixtures
+    // are present; everything else falls through to the `services` map
+    // (then the mock directory).
+    if (iface === "audio.state") {
+      if (audioState === undefined) return undefined;
+      const snapshot = {
+        volume_pct: audioState.volume_pct,
+        muted: audioState.muted,
+        port: audioState.port,
+        stale_age_ms: audioState.stale_age_ms ?? 0,
+      };
+      return {
+        get: (): unknown => ({ ...snapshot }),
+      };
+    }
+    if (iface === "audio.spectrum") {
+      if (audioSpectrum === undefined) return undefined;
+      const levels = [...audioSpectrum];
+      return {
+        spectrum: (args?: unknown): unknown => {
+          controlCalls.spectrum += 1;
+          const raw = (args as Record<string, unknown> | undefined)?.[
+            "buckets"
+          ];
+          const buckets =
+            typeof raw === "number" && Number.isInteger(raw) ? raw : 8;
+          return {
+            levels: levels.slice(0, Math.min(Math.max(buckets, 0), 32)),
+            stale_age_ms: 0,
+          };
+        },
+      };
+    }
+    if (iface === "audio.control") {
+      if (!audioControl) return undefined;
+      return {
+        toggle_mute: (): unknown => {
+          controlCalls.toggles += 1;
+          return { ok: true };
+        },
+        set_volume: (args?: unknown): unknown => {
+          controlCalls.steps.push(
+            (args as Record<string, unknown> | undefined)?.["delta"],
+          );
+          return { ok: true };
+        },
+      };
+    }
     const stub = stubbed[iface];
     if (stub === undefined) {
       return mockServicesGet(iface, opts);
@@ -367,6 +458,15 @@ export async function activateBar(
     },
     updates(): number {
       return updateCount;
+    },
+    audioControl(): {
+      readonly toggles: number;
+      readonly steps: readonly unknown[];
+    } {
+      return { toggles: controlCalls.toggles, steps: [...controlCalls.steps] };
+    },
+    audioSpectrumCalls(): number {
+      return controlCalls.spectrum;
     },
     close(): void {
       lua.global.close();
