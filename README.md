@@ -33,15 +33,15 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
 Keys live under the plugin namespace (`plugins."bitty-terminal.bar"`); absent
 or invalid values fall back to the default.
 
-| Key              | Type    | Default    | Replaces (retired Core key) | Notes                                   |
-| ---------------- | ------- | ---------- | --------------------------- | --------------------------------------- |
-| `show`           | boolean | `true`     | `workspace.show_bar`        | Live on `config.reloaded`.              |
-| `edge`           | string  | `"bottom"` | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
-| `show_single`    | boolean | `false`    | none (Core always hid it)   | Live on `config.reloaded`.              |
-| `name_max_chars` | integer | `32`       | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
-| `modules_left`   | array   | `["workspaces"]` | none                 | Ordered module names; live.             |
-| `modules_center` | array   | `[]`       | none                        | Rendered after left; live.              |
-| `modules_right`  | array   | `[]`       | none                        | Rendered after center; live.            |
+| Key              | Type    | Default          | Replaces (retired Core key) | Notes                                   |
+| ---------------- | ------- | ---------------- | --------------------------- | --------------------------------------- |
+| `show`           | boolean | `true`           | `workspace.show_bar`        | Live on `config.reloaded`.              |
+| `edge`           | string  | `"bottom"`       | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
+| `show_single`    | boolean | `false`          | none (Core always hid it)   | Live on `config.reloaded`.              |
+| `name_max_chars` | integer | `32`             | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+| `modules_left`   | array   | `["workspaces"]` | none                        | Ordered module names; live.             |
+| `modules_center` | array   | `[]`             | none                        | Rendered after left; live.              |
+| `modules_right`  | array   | `[]`             | none                        | Rendered after center; live.            |
 
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
@@ -74,11 +74,57 @@ the text as a notification (the v1 tooltip→notify fallback via
 
 Per-module options live in a settings collection named after the module:
 
-| Module  | Option    | Type    | Default   | Notes                                             |
-| ------- | --------- | ------- | --------- | ------------------------------------------------- |
-| `clock` | `format`  | string  | `"%H:%M"` | `os.date` format.                                 |
-| `clock` | `tick_ms` | integer | `60000`   | Timer cadence, clamped to the `1000` ms floor.    |
-| `clock` | `tooltip` | string  | none      | Detail text shown via the `detail` notification.  |
+| Module  | Option    | Type    | Default   | Notes                                            |
+| ------- | --------- | ------- | --------- | ------------------------------------------------ |
+| `clock` | `format`  | string  | `"%H:%M"` | `os.date` format.                                |
+| `clock` | `tick_ms` | integer | `60000`   | Timer cadence, clamped to the `1000` ms floor.   |
+| `clock` | `tooltip` | string  | none      | Detail text shown via the `detail` notification. |
+
+### Modules (Phase B devices)
+
+The first system modules consume broker `owner:iface@version` providers
+served by the native `bitty-terminal.devices` component (Core CTX-1197 /
+CTX-1201; bitty#2012 network, bitty#2017 bluetooth, bitty#2020 backlight +
+idle-inhibit). Each resolves its short interface with an exact `^1.0`
+requirement and `optional = true`: an ungranted or absent provider hides the
+module and leaves the rest of the plan untouched. Read vs control never share
+an interface, and every control call re-resolves its control interface, so a
+narrowed grant takes effect without restart.
+
+- `network` (timer, 3 s floor): link plus measured bandwidth
+  (`wifi 8.0K/4.0K`); unmeasured rates are omitted. The ESSID renders only
+  when the separately-granted `network.essid` sub-interface resolves
+  (`wifi 8.0K/4.0K (Home)`); otherwise the key is absent and the rest is
+  unaffected. Never clickable: no control wiring exists or is wanted here.
+  Options: `format` (`{link}`, `{down}`, `{up}`, `{essid}`), `tick_ms`
+  (clamped at or above 3 s), `tooltip`.
+- `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
+  (`bt on (1/2)`; alias/address rendering stays Lua-side). Read-only by
+  default: the bonded-device list rides the `detail` tooltip fallback. With
+  `toggle = true` and the `bluetooth.control` head granted, the click flips
+  power via `set_power` only; deny defaults to the read-only render.
+  Options: `format` (`{status}`, `{connected}`, `{total}`, `{powered}`),
+  `tick_ms` (at or above 5 s), `tooltip`, `toggle`.
+- `backlight` (timer, 5 s floor): brightness (`75%`). The click steps by
+  `step` percent points (default `10`) via `backlight.control`/`set_step`
+  only. An unpermitted attempt reports `E_NOT_PERMITTED` host-side and the
+  click degrades to a notification (DEC-0115: never retries, never escalates,
+  never setuid). Without the control head the module is read-only.
+  Options: `format` (`{pct}`), `tick_ms` (at or above 5 s), `tooltip`,
+  `step` (`-100..100`).
+- `idle` (timer, 5 s floor): inhibit state (`inhibit:on` / `inhibit:off`;
+  the activated/deactivated glyphs stay config-side via `on_text` /
+  `off_text`). The click flips inhibition via `idle.control`/`set` only when
+  that head is granted; a denied toggle degrades to a notification.
+  Options: `tick_ms` (at or above 5 s), `tooltip`, `on_text`, `off_text`.
+
+Manifest remainder: the device heads (`platform.network.read`,
+`platform.essid.read`, `platform.bluetooth.read/.control`,
+`platform.backlight.read/.control`, `platform.idle.read/.control`) must be
+requested in `[capabilities]` (read heads plus each control head only for the
+toggle/step variants) once the SDK closed set admits them — the pinned SDK
+currently rejects them with `capabilities.unknown`. No Lua change is needed
+when they land.
 
 A JSON settings array/object crosses the bridge into Lua as an indexable value
 (not a plain table), so module lists and per-module options are read through that
@@ -122,7 +168,11 @@ the Core workspaceline text exactly.
 `workspace.*` events), `workspace.control` (`focus` for clicks), and
 `platform.notify` (the tooltip→notify `detail` fallback). Without
 `workspace.control` the bar still renders and pill clicks fail closed; without
-`platform.notify` the detail fallback fails closed.
+`platform.notify` the detail fallback fails closed. Device-module control
+clicks (`bluetooth-toggle`, `backlight-step`, `idle-toggle`) each call exactly
+one control method on their own control interface and only while that
+interface resolves; a denied call degrades to a notification and never
+retries.
 
 ### Known host gaps
 
@@ -143,15 +193,16 @@ Gaps in the current host, not in this plugin:
 
 ## Layout
 
-| Path                          | Purpose                                                                    |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers. |
-| `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`. |
-| `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.       |
-| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).        |
-| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                          |
+| Path                          | Purpose                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers.   |
+| `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`.   |
+| `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.         |
+| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).          |
+| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                            |
 | `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
-| `justfile`                    | Quality gates with pinned tool versions.                                   |
+| `tests/devices.test.ts`       | Phase B device module tests (network, bluetooth, backlight, idle).           |
+| `justfile`                    | Quality gates with pinned tool versions.                                     |
 
 ## Development
 

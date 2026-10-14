@@ -17,10 +17,11 @@
 -- list (Waybar-style `modules_left`/`modules_center`/`modules_right`); each
 -- module is a registry entry `{ name, kind, tick_ms, events, render(data) }`
 -- that renders atoms from local data or a broker interface on its own cadence.
--- Clicks dispatch registered commands only and never shell out. System modules
--- (broker `owner:iface@version` providers) are Phase B; true centering
--- (`modules_center`), scroll bindings, real tooltips, and the tray need new
--- Core vehicles and are Phase C. No new Core API is introduced here.
+-- Clicks dispatch registered commands only and never shell out. Phase B adds
+-- the first system modules (`network`, `bluetooth`, `backlight`, `idle`) over
+-- broker `owner:iface@version` providers; true centering (`modules_center`),
+-- scroll bindings, real tooltips, and the tray need new Core vehicles and are
+-- Phase C. No new Core API is introduced here.
 --
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
@@ -34,10 +35,18 @@ local PLUGIN_ID = "bitty-terminal.bar"
 -- reservation in `bitty-plugin.toml`. Click bindings carry the qualified name.
 local FOCUS_COMMAND_ID = "focus"
 local DETAIL_COMMAND_ID = "detail"
+local BLUETOOTH_TOGGLE_COMMAND_ID = "bluetooth-toggle"
+local BACKLIGHT_STEP_COMMAND_ID = "backlight-step"
+local IDLE_TOGGLE_COMMAND_ID = "idle-toggle"
 M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
 -- Tooltip-without-command fallback: the click shows the module's detail text
 -- as a notification (`bitty.notify.show`) because v1 has no tooltip vehicle.
 M.DETAIL_COMMAND = PLUGIN_ID .. ":" .. DETAIL_COMMAND_ID
+-- Device-module control commands (Phase B): each calls exactly one control
+-- method on its own control interface and never anything else.
+M.BLUETOOTH_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. BLUETOOTH_TOGGLE_COMMAND_ID
+M.BACKLIGHT_STEP_COMMAND = PLUGIN_ID .. ":" .. BACKLIGHT_STEP_COMMAND_ID
+M.IDLE_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. IDLE_TOGGLE_COMMAND_ID
 
 -- Bounds mirrored from the retired Core workspaceline so the retirement is
 -- behavior-preserving (bitty@55f9d336 `crates/bitty-runtime/src/runtime/workspaces.rs`).
@@ -432,6 +441,394 @@ function M.clock_atoms(ctx)
   return { atom }
 end
 
+-- Phase B device modules (bitty#2012 network, bitty#2017 bluetooth, bitty#2020
+-- backlight + idle-inhibit; Core CTX-1197/CTX-1201). Each module consumes one
+-- short broker interface (`owner:iface@version` served by the native
+-- `bitty-terminal.devices` component) through `bitty.services.get` with an
+-- exact `^1.0` requirement and `optional = true`: an ungranted or absent
+-- provider resolves to nil (indistinguishable, fail closed) and the module
+-- hides, leaving the rest of the plan untouched. Every read runs in `pcall`
+-- and every snapshot is shape-checked; invalid shapes hide the module.
+-- Read vs control never share an interface: control methods (`set_power`,
+-- `set_step`, `set`) are called only from the registered toggle/step
+-- commands, and only when the separate control interface resolves. A denied
+-- control call degrades to a notification (best-effort) and never retries or
+-- escalates (backlight privilege rule DEC-0115).
+
+-- Short broker interfaces negotiated by the device modules.
+M.NETWORK_STATE_IFACE = "network.state"
+M.NETWORK_ESSID_IFACE = "network.essid"
+M.BLUETOOTH_STATE_IFACE = "bluetooth.state"
+M.BLUETOOTH_CONTROL_IFACE = "bluetooth.control"
+M.BACKLIGHT_STATE_IFACE = "backlight.state"
+M.BACKLIGHT_CONTROL_IFACE = "backlight.control"
+M.IDLE_STATE_IFACE = "idle.state"
+M.IDLE_CONTROL_IFACE = "idle.control"
+
+-- Exact version requirement for the batch-B interfaces (Core
+-- PROVIDER_INTERFACE_VERSION 1.0.0; highest compatible wins host-side, never
+-- a silent downgrade).
+M.DEVICE_VERSION_REQ = "^1.0"
+
+-- Provider-side poll floors (ms): configuration can never sample faster than
+-- the provider cadence (network 3 s per bitty#2012; bluetooth, backlight, and
+-- idle 5 s per bitty#2017/#2020). Timer modules arm at these cadences and the
+-- `tick_floor_ms` registry field keeps an options override at or above them.
+M.NETWORK_TICK_MS = 3000
+M.DEVICE_TICK_MS = 5000
+
+-- Accepted network link states (Core LinkKind; anything else hides).
+M.LINK_KINDS = { ethernet = true, wifi = true, disconnected = true, disabled = true }
+
+-- Defensive ESSID byte bound (an SSID is at most 32 bytes on the wire).
+M.ESSID_MAX_BYTES = 64
+
+-- Backlight step bound (percent points per click, either direction).
+M.BACKLIGHT_STEP_MAX = 100
+M.BACKLIGHT_DEFAULT_STEP = 10
+
+-- Best-effort notification bodies for denied control calls (user-initiated
+-- clicks only; reads never notify).
+M.BLUETOOTH_UNAVAILABLE = "Bluetooth control unavailable."
+M.BACKLIGHT_UNAVAILABLE = "Backlight control unavailable."
+M.IDLE_UNAVAILABLE = "Idle control unavailable."
+
+-- Resolves one short broker interface with the batch version requirement.
+-- Returns the plain service table, or nil when the provider is absent,
+-- ungranted, version-mismatched, or the services namespace is unavailable
+-- (older host): ungranted stays indistinguishable from absent.
+function M.resolve_service(iface)
+  if bitty == nil or bitty.services == nil or bitty.services.get == nil then
+    return nil
+  end
+  local ok, svc = pcall(bitty.services.get, iface, {
+    version = M.DEVICE_VERSION_REQ,
+    optional = true,
+  })
+  if not ok or svc == nil then
+    return nil
+  end
+  if type(svc) ~= "table" and type(svc) ~= "userdata" then
+    return nil
+  end
+  return svc
+end
+
+-- Calls `get()` on a resolved service; returns the snapshot table, or nil
+-- when the call fails, the provider is gone, or the shape is not a table.
+function M.service_data(svc)
+  if svc == nil then
+    return nil
+  end
+  local ok, data = pcall(function()
+    return svc.get()
+  end)
+  if not ok then
+    return nil
+  end
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  return data
+end
+
+-- Wi-Fi identity from the separately-granted `network.essid` sub-interface,
+-- or nil. The base `network.state` snapshot never carries an ESSID (Core
+-- omits the key without the sub-grant), so this is the only ESSID source and
+-- an ungranted sub-grant renders exactly like an NM-less host: no ESSID text.
+function M.essid_value()
+  local data = M.service_data(M.resolve_service(M.NETWORK_ESSID_IFACE))
+  if data == nil then
+    return nil
+  end
+  if type(data.essid) ~= "string" or data.essid == "" then
+    return nil
+  end
+  return M.truncate_bytes(data.essid, M.ESSID_MAX_BYTES)
+end
+
+-- Whether `link` is an accepted network link state.
+function M.valid_link(link)
+  return type(link) == "string" and M.LINK_KINDS[link] == true
+end
+
+-- Humanized bandwidth rate ("123B", "8.0K", "1.2M"), or nil for an absent or
+-- invalid measurement. Missing rates are omitted by the caller, never
+-- fabricated.
+function M.format_bps(bps)
+  if type(bps) ~= "number" or bps < 0 or bps ~= bps then
+    return nil
+  end
+  local value = math.floor(bps)
+  if value < 1000 then
+    return value .. "B"
+  end
+  if value < 1000000 then
+    return string.format("%.1fK", value / 1000)
+  end
+  return string.format("%.1fM", value / 1000000)
+end
+
+-- Collapses whitespace runs to one space and trims the ends, so a template
+-- with absent keys renders cleanly instead of leaving gaps.
+function M.compact(text)
+  if type(text) ~= "string" then
+    return ""
+  end
+  local one = string.gsub(text, "%s+", " ")
+  one = string.gsub(one, "^%s+", "")
+  return string.gsub(one, "%s+$", "")
+end
+
+-- Network display text, or nil when the snapshot hides (invalid link). The
+-- default renders link plus measured bandwidth plus the ESSID in parentheses
+-- when the sub-grant holds; a custom `format` template overrides the whole
+-- text with `{link}`, `{down}`, `{up}`, and `{essid}` keys (absent keys
+-- render as "").
+function M.network_text(data, essid, options)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  if not M.valid_link(data.link) then
+    return nil
+  end
+  local down = M.format_bps(data.down_bps)
+  local up = M.format_bps(data.up_bps)
+  local clean_essid = nil
+  if type(essid) == "string" and essid ~= "" then
+    clean_essid = M.truncate_bytes(essid, M.ESSID_MAX_BYTES)
+  end
+  local format = options.format
+  if type(format) == "string" and format ~= "" then
+    return M.compact(M.render_template(format, {
+      link = data.link,
+      down = down or "",
+      up = up or "",
+      essid = clean_essid or "",
+    }))
+  end
+  local text = data.link
+  if down ~= nil or up ~= nil then
+    text = text .. " " .. (down or "?") .. "/" .. (up or "?")
+  end
+  if clean_essid ~= nil then
+    text = text .. " (" .. clean_essid .. ")"
+  end
+  return text
+end
+
+-- Network module render: one readout atom, or no atoms when the provider is
+-- ungranted, absent, failing, or misshapen. The atom is never clickable (no
+-- control wiring exists or is wanted for network).
+function M.network_atoms(ctx)
+  local options = ctx.options or {}
+  local data = M.service_data(M.resolve_service(M.NETWORK_STATE_IFACE))
+  local text = M.network_text(data, M.essid_value(), options)
+  if text == nil then
+    return {}
+  end
+  return { { text = text } }
+end
+
+-- Bluetooth display text, or nil when the snapshot hides (`powered` must be
+-- a boolean; counters fall back to 0). The default renders the radio state
+-- plus the connected/total device counts while powered.
+function M.bluetooth_text(data, options)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  if type(data.powered) ~= "boolean" then
+    return nil
+  end
+  local connected = 0
+  if is_integer(data.connected_count) and data.connected_count >= 0 then
+    connected = math.floor(data.connected_count)
+  end
+  local total = 0
+  if is_integer(data.total_count) and data.total_count >= 0 then
+    total = math.floor(data.total_count)
+  end
+  local status = "off"
+  if data.powered then
+    status = "on"
+  end
+  local format = options.format
+  if type(format) == "string" and format ~= "" then
+    return M.compact(M.render_template(format, {
+      status = status,
+      connected = tostring(connected),
+      total = tostring(total),
+      powered = tostring(data.powered),
+    }))
+  end
+  local text = "bt " .. status
+  if data.powered and total > 0 then
+    text = text .. " (" .. connected .. "/" .. total .. ")"
+  end
+  return text
+end
+
+-- Bluetooth detail text (`alias (address)` per bonded device, bounded), or
+-- nil when no device renders. Alias/address rendering stays Lua-side; the
+-- enumeration itself stays capped host-side (16 entries plus the truncated
+-- flag), so only a display bound applies here.
+function M.bluetooth_detail(data)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  local devices = data.devices
+  if not is_collection(devices) then
+    return nil
+  end
+  local parts = {}
+  local count = list_len(devices)
+  if count > 16 then
+    count = 16
+  end
+  for index = 1, count do
+    local device = devices[index]
+    if type(device) == "table" or type(device) == "userdata" then
+      if type(device.alias) == "string" and type(device.address) == "string" then
+        parts[#parts + 1] = device.alias .. " (" .. device.address .. ")"
+      end
+    end
+  end
+  if #parts == 0 then
+    return nil
+  end
+  return M.truncate_bytes(table.concat(parts, ", "), M.TEMPLATE_MAX_BYTES)
+end
+
+-- Bluetooth module render: the radio readout, clickable for the power toggle
+-- only when the toggle option is set and the separate control interface
+-- resolves (deny defaults to a read-only render). Without a toggle binding,
+-- device detail rides the tooltip→notify fallback.
+function M.bluetooth_atoms(ctx)
+  local options = ctx.options or {}
+  local data = M.service_data(M.resolve_service(M.BLUETOOTH_STATE_IFACE))
+  local text = M.bluetooth_text(data, options)
+  if text == nil then
+    return {}
+  end
+  local atom = { text = text }
+  if options.toggle == true then
+    local control = M.resolve_service(M.BLUETOOTH_CONTROL_IFACE)
+    if control ~= nil then
+      atom.on_click = M.click_binding(M.BLUETOOTH_TOGGLE_COMMAND)
+    end
+  end
+  if atom.on_click == nil then
+    local detail = M.bluetooth_detail(data)
+    if detail ~= nil then
+      atom.tooltip = detail
+    end
+  end
+  return { atom }
+end
+
+-- Whether `delta` is a usable backlight step (percent points per click).
+function M.valid_step(delta)
+  return is_integer(delta)
+    and delta >= -M.BACKLIGHT_STEP_MAX
+    and delta <= M.BACKLIGHT_STEP_MAX
+end
+
+-- Backlight display text ("75%"), or nil when the snapshot hides (`pct` must
+-- read 0..100). A custom `format` template overrides with the `{pct}` key.
+function M.backlight_text(data, options)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  if type(data.pct) ~= "number" or data.pct ~= math.floor(data.pct) then
+    return nil
+  end
+  local pct = math.floor(data.pct)
+  if pct < 0 or pct > 100 then
+    return nil
+  end
+  local format = options.format
+  if type(format) == "string" and format ~= "" then
+    return M.compact(M.render_template(format, { pct = tostring(pct) }))
+  end
+  return pct .. "%"
+end
+
+-- Backlight module render: the brightness readout, clickable for one step
+-- only when the separate control interface resolves (read stays the default).
+-- A denied step degrades to a notification in the step command, never a
+-- retry or an escalation.
+function M.backlight_atoms(ctx)
+  local options = ctx.options or {}
+  local data = M.service_data(M.resolve_service(M.BACKLIGHT_STATE_IFACE))
+  local text = M.backlight_text(data, options)
+  if text == nil then
+    return {}
+  end
+  local atom = { text = text }
+  local step = options.step
+  if step == nil then
+    step = M.BACKLIGHT_DEFAULT_STEP
+  end
+  if M.valid_step(step) then
+    local control = M.resolve_service(M.BACKLIGHT_CONTROL_IFACE)
+    if control ~= nil then
+      atom.on_click = M.click_binding(M.BACKLIGHT_STEP_COMMAND, {
+        delta = math.floor(step),
+      })
+    end
+  end
+  if atom.on_click == nil then
+    if type(options.tooltip) == "string" and options.tooltip ~= "" then
+      atom.tooltip = options.tooltip
+    end
+  end
+  return { atom }
+end
+
+-- Idle-inhibit display text, or nil when the snapshot hides (`inhibited`
+-- must be a boolean). The activated/deactivated glyphs stay config-side via
+-- `on_text`/`off_text`.
+function M.idle_text(data, options)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return nil
+  end
+  if type(data.inhibited) ~= "boolean" then
+    return nil
+  end
+  if data.inhibited then
+    if type(options.on_text) == "string" and options.on_text ~= "" then
+      return options.on_text
+    end
+    return "inhibit:on"
+  end
+  if type(options.off_text) == "string" and options.off_text ~= "" then
+    return options.off_text
+  end
+  return "inhibit:off"
+end
+
+-- Idle-inhibit module render: the inhibit state, clickable for the toggle
+-- only when the separate control interface resolves (read stays the default).
+function M.idle_atoms(ctx)
+  local options = ctx.options or {}
+  local data = M.service_data(M.resolve_service(M.IDLE_STATE_IFACE))
+  local text = M.idle_text(data, options)
+  if text == nil then
+    return {}
+  end
+  local atom = { text = text }
+  local control = M.resolve_service(M.IDLE_CONTROL_IFACE)
+  if control ~= nil then
+    atom.on_click = M.click_binding(M.IDLE_TOGGLE_COMMAND)
+  end
+  if atom.on_click == nil then
+    if type(options.tooltip) == "string" and options.tooltip ~= "" then
+      atom.tooltip = options.tooltip
+    end
+  end
+  return { atom }
+end
+
 -- In-plugin module registry (bitty-plugins#86 Phase A). Each entry declares
 -- how it renders and how it refreshes:
 --   name    : the settings name that selects it in a module group.
@@ -467,6 +864,54 @@ M.MODULES.clock = {
   option_keys = { "format", "tick_ms", "tooltip" },
   render = function(ctx)
     return M.clock_atoms(ctx)
+  end,
+}
+
+-- Phase B system modules (bitty-plugins#86 Phase B): broker
+-- `owner:iface@version` providers on their contract cadences. Each renders
+-- nothing when its provider is ungranted, absent, failing, or misshapen, so
+-- one denied device never hides the bar.
+M.MODULES.network = {
+  name = "network",
+  kind = "timer",
+  tick_ms = M.NETWORK_TICK_MS,
+  tick_floor_ms = M.NETWORK_TICK_MS,
+  option_keys = { "format", "tick_ms", "tooltip" },
+  render = function(ctx)
+    return M.network_atoms(ctx)
+  end,
+}
+
+M.MODULES.bluetooth = {
+  name = "bluetooth",
+  kind = "timer",
+  tick_ms = M.DEVICE_TICK_MS,
+  tick_floor_ms = M.DEVICE_TICK_MS,
+  option_keys = { "format", "tick_ms", "tooltip", "toggle" },
+  render = function(ctx)
+    return M.bluetooth_atoms(ctx)
+  end,
+}
+
+M.MODULES.backlight = {
+  name = "backlight",
+  kind = "timer",
+  tick_ms = M.DEVICE_TICK_MS,
+  tick_floor_ms = M.DEVICE_TICK_MS,
+  option_keys = { "format", "tick_ms", "tooltip", "step" },
+  render = function(ctx)
+    return M.backlight_atoms(ctx)
+  end,
+}
+
+M.MODULES.idle = {
+  name = "idle",
+  kind = "timer",
+  tick_ms = M.DEVICE_TICK_MS,
+  tick_floor_ms = M.DEVICE_TICK_MS,
+  option_keys = { "tick_ms", "tooltip", "on_text", "off_text" },
+  render = function(ctx)
+    return M.idle_atoms(ctx)
   end,
 }
 
@@ -550,7 +995,9 @@ function M.read_plan(get, opts)
 end
 
 -- Timer cadence for a module (nil for an event module): the module default,
--- overridable per module, clamped to the rate-policy floor.
+-- overridable per module, clamped to the rate-policy floor. A module may
+-- name a stricter `tick_floor_ms` (device providers sample no faster than
+-- their contract cadence); the chassis floor still applies otherwise.
 function M.tick_ms(def, options)
   if not is_collection(def) or def.tick_ms == nil then
     return nil
@@ -559,8 +1006,12 @@ function M.tick_ms(def, options)
   if is_collection(options) and is_integer(options.tick_ms) and options.tick_ms >= 1 then
     ms = options.tick_ms
   end
-  if ms < M.MIN_TICK_MS then
-    ms = M.MIN_TICK_MS
+  local floor = M.MIN_TICK_MS
+  if is_integer(def.tick_floor_ms) and def.tick_floor_ms > floor then
+    floor = def.tick_floor_ms
+  end
+  if ms < floor then
+    ms = floor
   end
   return math.floor(ms)
 end
@@ -793,6 +1244,122 @@ bitty.commands.register({
       return false
     end
     return result
+  end,
+})
+
+-- Best-effort control-denial notification for a user-initiated device click.
+-- Reads never notify; a denied control call notifies once and never retries
+-- or escalates.
+local function notify_unavailable(body)
+  if bitty.notify == nil or bitty.notify.show == nil then
+    return false
+  end
+  local ok, shown = pcall(bitty.notify.show, {
+    title = M.TOOLTIP_TITLE,
+    body = body,
+  })
+  if ok and shown == true then
+    return true
+  end
+  return false
+end
+
+bitty.commands.register({
+  id = BLUETOOTH_TOGGLE_COMMAND_ID,
+  title = "Unified Bar: toggle Bluetooth power",
+  description = "Flip the Bluetooth radio power via the bluetooth.control interface.",
+  args_schema = {
+    type = "object",
+    properties = {},
+    additionalProperties = false,
+  },
+  run = function(args)
+    local data = M.service_data(M.resolve_service(M.BLUETOOTH_STATE_IFACE))
+    if data == nil or type(data.powered) ~= "boolean" then
+      return false
+    end
+    local control = M.resolve_service(M.BLUETOOTH_CONTROL_IFACE)
+    if control == nil then
+      return false
+    end
+    local target = not data.powered
+    local ok = pcall(function()
+      control.set_power(target)
+    end)
+    if not ok then
+      notify_unavailable(M.BLUETOOTH_UNAVAILABLE)
+      return false
+    end
+    pcall(render)
+    return true
+  end,
+})
+
+bitty.commands.register({
+  id = BACKLIGHT_STEP_COMMAND_ID,
+  title = "Unified Bar: step backlight brightness",
+  description = "Step the backlight brightness by delta percent points (DEC-0115: unpermitted attempts degrade to a notification, never escalate).",
+  args_schema = {
+    type = "object",
+    properties = {
+      delta = { type = "number", minimum = -M.BACKLIGHT_STEP_MAX, maximum = M.BACKLIGHT_STEP_MAX },
+    },
+    required = { "delta" },
+    additionalProperties = false,
+  },
+  run = function(args)
+    local params = args
+    if type(params) ~= "table" and type(params) ~= "userdata" then
+      return false
+    end
+    if not M.valid_step(params.delta) then
+      return false
+    end
+    local control = M.resolve_service(M.BACKLIGHT_CONTROL_IFACE)
+    if control == nil then
+      return false
+    end
+    local delta = math.floor(params.delta)
+    local ok = pcall(function()
+      control.set_step(delta)
+    end)
+    if not ok then
+      notify_unavailable(M.BACKLIGHT_UNAVAILABLE)
+      return false
+    end
+    pcall(render)
+    return true
+  end,
+})
+
+bitty.commands.register({
+  id = IDLE_TOGGLE_COMMAND_ID,
+  title = "Unified Bar: toggle idle inhibition",
+  description = "Flip idle inhibition via the idle.control interface.",
+  args_schema = {
+    type = "object",
+    properties = {},
+    additionalProperties = false,
+  },
+  run = function(args)
+    local data = M.service_data(M.resolve_service(M.IDLE_STATE_IFACE))
+    if data == nil or type(data.inhibited) ~= "boolean" then
+      return false
+    end
+    local control = M.resolve_service(M.IDLE_CONTROL_IFACE)
+    if control == nil then
+      return false
+    end
+    local target = not data.inhibited
+    local ok = pcall(function()
+      control.set(target)
+    end)
+    if not ok then
+      notify_unavailable(M.IDLE_UNAVAILABLE)
+      return false
+    end
+    pcall(render)
+    return true
   end,
 })
 

@@ -4,7 +4,14 @@
  * command-only click dispatch — zero new Core API.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { LuaFactory, type LuaEngine } from "wasmoon";
 import { V1_SURFACE_FUNCTIONS } from "bitty-plugin-sdk";
 
@@ -37,7 +44,11 @@ function painted(run: BarRun): string | undefined {
   return text === "" ? undefined : text;
 }
 
-const THREE: WorkspaceInfo[] = [ws(1, "ws1"), ws(4, "code", true), ws(9, "logs")];
+const THREE: WorkspaceInfo[] = [
+  ws(1, "ws1"),
+  ws(4, "code", true),
+  ws(9, "logs"),
+];
 
 describe("declarative module list", () => {
   test("the default plan renders the workspaces module (behavior preserving)", async () => {
@@ -48,7 +59,10 @@ describe("declarative module list", () => {
   test("modules_left order drives render order", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: ["clock", "workspaces"], clock: { format: "T" } },
+      settings: {
+        modules_left: ["clock", "workspaces"],
+        clock: { format: "T" },
+      },
     });
     expect(painted(run)).toBe("T 1:ws1 4:code* 9:logs (3)");
   });
@@ -56,7 +70,10 @@ describe("declarative module list", () => {
   test("reordering the settings reorders the render", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: ["workspaces", "clock"], clock: { format: "T" } },
+      settings: {
+        modules_left: ["workspaces", "clock"],
+        clock: { format: "T" },
+      },
     });
     expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) T");
   });
@@ -120,7 +137,10 @@ describe("declarative module list", () => {
   test("any module count still mounts exactly one band", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: ["clock", "workspaces"], clock: { format: "T" } },
+      settings: {
+        modules_left: ["clock", "workspaces"],
+        clock: { format: "T" },
+      },
     });
     expect(run.mounts.length).toBe(1);
   });
@@ -146,7 +166,10 @@ describe("per-module cadence (timer modules)", () => {
   test("v1 one-shot timers stay under the rate policy (no re-arm violation)", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { modules_left: ["clock"], clock: { format: "T", tick_ms: 60000 } },
+      settings: {
+        modules_left: ["clock"],
+        clock: { format: "T", tick_ms: 60000 },
+      },
     });
     run.host.advanceTimers(60000);
     expect(run.updates()).toBe(1);
@@ -204,9 +227,9 @@ describe("tooltip→notify fallback", () => {
       command: DETAIL_COMMAND,
       args: { text: "full date" },
     });
-    expect(run.host.dispatchCommand(DETAIL_COMMAND, { text: "full date" })).toBe(
-      true,
-    );
+    expect(
+      run.host.dispatchCommand(DETAIL_COMMAND, { text: "full date" }),
+    ).toBe(true);
     expect(run.host.notifications).toEqual([
       { title: "Unified Bar", body: "full date" },
     ]);
@@ -355,10 +378,90 @@ describe("pure chassis helpers", () => {
     expect(fallback.map((spec) => spec.name)).toEqual(["workspaces"]);
   });
 
-  test("the module registry exposes workspaces and clock", () => {
+  test("the module registry exposes workspaces, clock, and the device modules", () => {
     const modules = mod["MODULES"] as Record<string, { name: string }>;
-    expect(Object.keys(modules).sort()).toEqual(["clock", "workspaces"]);
+    expect(Object.keys(modules).sort()).toEqual([
+      "backlight",
+      "bluetooth",
+      "clock",
+      "idle",
+      "network",
+      "workspaces",
+    ]);
     expect(modules["workspaces"]!.name).toBe("workspaces");
     expect(modules["clock"]!.name).toBe("clock");
+  });
+
+  test("tick floors keep device modules at their contract cadence", () => {
+    const modules = mod["MODULES"] as Record<string, { tick_ms: number }>;
+    expect(modules["network"]!.tick_ms).toBe(3000);
+    expect(modules["bluetooth"]!.tick_ms).toBe(5000);
+    expect(modules["backlight"]!.tick_ms).toBe(5000);
+    expect(modules["idle"]!.tick_ms).toBe(5000);
+    expect(
+      mod["tick_ms"]({ tick_ms: 3000, tick_floor_ms: 3000 }, { tick_ms: 1 }),
+    ).toBe(3000);
+    expect(mod["tick_ms"]({ tick_ms: 5000, tick_floor_ms: 5000 }, {})).toBe(
+      5000,
+    );
+  });
+
+  test("format_bps humanizes rates and rejects bad measurements", () => {
+    expect(mod["format_bps"](0)).toBe("0B");
+    expect(mod["format_bps"](999)).toBe("999B");
+    expect(mod["format_bps"](8000)).toBe("8.0K");
+    expect(mod["format_bps"](1500000)).toBe("1.5M");
+    expect(mod["format_bps"]() ?? null).toBeNull();
+    expect(mod["format_bps"]("x") ?? null).toBeNull();
+    expect(mod["format_bps"](-1) ?? null).toBeNull();
+  });
+
+  test("network_text renders link, rates, and the granted ESSID only", () => {
+    const data = { link: "wifi", down_bps: 8000, up_bps: 4000 };
+    expect(mod["network_text"](data, "Home", {})).toBe("wifi 8.0K/4.0K (Home)");
+    expect(mod["network_text"](data, undefined, {})).toBe("wifi 8.0K/4.0K");
+    expect(mod["network_text"]({ link: "ethernet" }, undefined, {})).toBe(
+      "ethernet",
+    );
+    expect(
+      mod["network_text"]({ link: "satellite" }, undefined, {}) ?? null,
+    ).toBeNull();
+    expect(
+      mod["network_text"](data, undefined, { format: "{link} {down}/{up}" }),
+    ).toBe("wifi 8.0K/4.0K");
+  });
+
+  test("bluetooth_text and bluetooth_detail stay Lua-side", () => {
+    const data = {
+      powered: true,
+      connected_count: 1,
+      total_count: 2,
+      devices: [
+        { alias: "Headphones", address: "AA:BB:CC:DD:EE:01" },
+        { alias: "Keyboard", address: "AA:BB:CC:DD:EE:02" },
+      ],
+    };
+    expect(mod["bluetooth_text"](data, {})).toBe("bt on (1/2)");
+    expect(mod["bluetooth_text"]({ powered: false }, {})).toBe("bt off");
+    expect(mod["bluetooth_text"]({ powered: "yes" }, {}) ?? null).toBeNull();
+    expect(mod["bluetooth_detail"](data)).toBe(
+      "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
+    );
+    expect(mod["bluetooth_detail"]({ devices: {} }) ?? null).toBeNull();
+  });
+
+  test("backlight_text, idle_text, valid_step, and compact", () => {
+    expect(mod["backlight_text"]({ pct: 75 }, {})).toBe("75%");
+    expect(mod["backlight_text"]({ pct: 500 }, {}) ?? null).toBeNull();
+    expect(mod["backlight_text"]({ pct: "x" }, {}) ?? null).toBeNull();
+    expect(mod["idle_text"]({ inhibited: true }, {})).toBe("inhibit:on");
+    expect(mod["idle_text"]({ inhibited: false }, { off_text: "NO" })).toBe(
+      "NO",
+    );
+    expect(mod["idle_text"]({}, {}) ?? null).toBeNull();
+    expect(mod["valid_step"](10)).toBe(true);
+    expect(mod["valid_step"](1.5)).toBe(false);
+    expect(mod["valid_step"](101)).toBe(false);
+    expect(mod["compact"]("a  b   c ")).toBe("a b c");
   });
 });
