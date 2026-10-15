@@ -335,7 +335,7 @@ describe("cpu module", () => {
     }
   });
 
-  test("a tick re-polls and re-renders at the 2s ceiling", async () => {
+  test("ticks re-poll and re-render with fresh values (bar#17)", async () => {
     let reading = 42.4;
     const run = await bar({
       workspaces: THREE,
@@ -353,6 +353,38 @@ describe("cpu module", () => {
     expect(run.updates()).toBe(1);
     expect(painted(run)).toBe("88%");
     expect(sensorLeaf(run, "88%").fg).toBe("warning");
+    // The pre-armed chain (not a post-activation re-arm, which v1 closes)
+    // keeps repainting on later ticks with no violation.
+    reading = 12.3;
+    run.host.advanceTimers(2000);
+    expect(run.updates()).toBe(2);
+    expect(painted(run)).toBe("12%");
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("a baseline-missed first poll paints on the next tick (bar#17)", async () => {
+    // The provider serves nil past no baseline yet (headed cpu stays hidden
+    // at mount for one delta interval); the next chained tick re-polls the
+    // negotiated handle and paints the live value autonomously.
+    let calls = 0;
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["cpu", "workspaces"] },
+      grants: SENSOR_GRANTS,
+      services: {
+        [CPU]: {
+          snapshot: () => {
+            calls += 1;
+            if (calls < 2) return null;
+            return { ...CPU_SNAP };
+          },
+        },
+      },
+    });
+    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    run.host.advanceTimers(2000);
+    expect(run.updates()).toBe(1);
+    expect(painted(run)).toBe("42% 1:ws1 4:code* 9:logs (3)");
     expect(run.host.handlerViolations).toEqual([]);
   });
 

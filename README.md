@@ -213,12 +213,17 @@ A JSON settings array/object crosses the bridge into Lua as an indexable value
 (not a plain table), so module lists and per-module options are read through that
 indexable surface.
 
-**Cadence (Phase A).** `bitty.timers.create` is one-shot and creation is valid
-only during activation (ADR 0009 LUA-OQ-12). The chassis arms exactly one timer
-per timer module at the module cadence (clamped to the rate-policy floor) and
-re-arms after a tick; on a host without repeating timers the re-arm fails closed,
-so a tick fires once and no handler violation is recorded. The arm path needs no
-bar change when repeating timers land. Hidden bars arm nothing (pause-on-hidden).
+**Cadence (Phase A, bar#17).** `bitty.timers.create` is one-shot and creation
+is valid only during activation (ADR 0009 LUA-OQ-12). The chassis pre-arms a
+bounded chain of one-shot ticks per timer module at multiples of the module
+cadence (clamped to the rate-policy floor) while the window is open, sharing
+the host timer budget evenly (`M.chain_ticks`, at least two repeats per
+module); every tick re-polls providers and re-renders, so repeated advances
+repaint with fresh values and no handler violation is recorded. The first
+tick additionally re-arms one single tick optimistically, so the arm path
+needs no bar change when repeating timers land. Hidden bars arm nothing
+(pause-on-hidden); past the activation window (e.g. `config.reloaded`) the
+live chain is kept and only an immediate re-render is issued.
 
 ### Scratchpad indicator
 
