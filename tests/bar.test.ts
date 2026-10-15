@@ -461,4 +461,107 @@ describe("headless activation regression (bar#6)", () => {
     expect(code).not.toMatch(/gmatch.*\\128/);
     expect(code).not.toMatch(/\[\^\\128/);
   });
+
+  test("runtime code uses no phodopus-rejected gsub-with-function", () => {
+    // Phodopus admits string/table gsub replacements and rejects function
+    // replacements (`function replacement currently unsupported in gsub`).
+    // Scan every gsub call with balanced parens; none may carry a function.
+    const code = ENTRY_SOURCE.split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    const calls: string[] = [];
+    let from = 0;
+    for (;;) {
+      const start = code.indexOf("gsub(", from);
+      if (start === -1) break;
+      let depth = 0;
+      let i = start + "gsub".length;
+      for (; i < code.length; i += 1) {
+        const ch = code[i];
+        if (ch === "(") {
+          depth += 1;
+        } else if (ch === ")") {
+          depth -= 1;
+          if (depth === 0) break;
+        } else if (ch === '"' || ch === "'") {
+          const quote = ch;
+          i += 1;
+          while (i < code.length && code[i] !== quote) {
+            if (code[i] === "\\") i += 1;
+            i += 1;
+          }
+        }
+      }
+      calls.push(code.slice(start, i + 1));
+      from = i + 1;
+    }
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).not.toMatch(/\bfunction\b/);
+    }
+  });
+});
+
+describe("template renderer (bar#15)", () => {
+  interface TemplateMod {
+    render_template(format: unknown, data: unknown, max?: number): string;
+    CPU_DEFAULT_FORMAT: string;
+    MEMORY_DEFAULT_FORMAT: string;
+    BATTERY_DEFAULT_FORMAT: string;
+  }
+
+  test("renders the production template defaults", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template(mod.CPU_DEFAULT_FORMAT, { total: "12" })).toBe(
+        "12%",
+      );
+      expect(
+        mod.render_template(mod.MEMORY_DEFAULT_FORMAT, { pct: "42" }),
+      ).toBe("42%");
+      expect(
+        mod.render_template(mod.BATTERY_DEFAULT_FORMAT, {
+          icon: "H",
+          capacity: "87",
+        }),
+      ).toBe("H 87%");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("missing keys stay literal, values splice without %-escapes", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template("{a} {b}", { b: "B" })).toBe("{a} B");
+      expect(mod.render_template("{a}{b}", { a: "x", b: "y" })).toBe("xy");
+      expect(mod.render_template("{{x}}", { x: "1" })).toBe("{1}");
+      expect(mod.render_template("{v}", { v: "100% done" })).toBe("100% done");
+      expect(mod.render_template("{v}", { v: "%1 %0 %%" })).toBe("%1 %0 %%");
+      expect(mod.render_template("{v}", { v: "{lit}" })).toBe("{lit}");
+      expect(mod.render_template("hello", {})).toBe("hello");
+      expect(mod.render_template("", { a: "x" })).toBe("");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("rejects bad shapes and honors the byte cap", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template(undefined, { a: "x" })).toBe("");
+      expect(mod.render_template(42, { a: "x" })).toBe("");
+      expect(mod.render_template("{a}", undefined)).toBe("{a}");
+      expect(mod.render_template("{total}%", { total: "12" }, 4)).toBe("{tot");
+      expect(mod.render_template("{v}", { v: "日本語" }, 6)).toBe("日本");
+    } finally {
+      lua.global.close();
+    }
+  });
 });

@@ -314,6 +314,13 @@ end
 -- (a missing key keeps its literal `{key}`), then the result is cut to
 -- `max_bytes` on a character boundary. Pure; the module never builds a format
 -- engine beyond this substitution.
+--
+-- Portable substitution (bar#15): the phodopus production VM rejects
+-- `string.gsub` with a function replacement, so matches are walked with
+-- `string.find` (the same ASCII-only `{(%w+)}` pattern) and spliced with
+-- `string.sub`. Byte-identical to the gsub form: matches resolve
+-- left-to-right without overlap, a missing key keeps its literal `{key}`,
+-- and present values splice via `tostring` with no `%`-escape processing.
 function M.render_template(format, data, max_bytes)
   if type(format) ~= "string" then
     return ""
@@ -323,14 +330,27 @@ function M.render_template(format, data, max_bytes)
   end
   local cap = max_bytes or M.TEMPLATE_MAX_BYTES
   local bounded = M.truncate_bytes(format, cap)
-  local rendered = string.gsub(bounded, "{(%w+)}", function(key)
+  local out = {}
+  local pos = 1
+  local n = #bounded
+  while pos <= n do
+    local s, e, key = string.find(bounded, "{(%w+)}", pos)
+    if s == nil then
+      out[#out + 1] = string.sub(bounded, pos)
+      break
+    end
+    if s > pos then
+      out[#out + 1] = string.sub(bounded, pos, s - 1)
+    end
     local value = data[key]
     if value == nil then
-      return "{" .. key .. "}"
+      out[#out + 1] = string.sub(bounded, s, e)
+    else
+      out[#out + 1] = tostring(value)
     end
-    return tostring(value)
-  end)
-  return M.truncate_bytes(rendered, cap)
+    pos = e + 1
+  end
+  return M.truncate_bytes(table.concat(out), cap)
 end
 
 -- Theme token for a module `states` name, or nil for an unknown/absent state.
