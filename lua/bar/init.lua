@@ -2131,6 +2131,34 @@ function M.tick_ms(def, options)
   return math.floor(ms)
 end
 
+-- Bound on live pre-armed ticks per generation (bar#17): v1 timers are
+-- one-shot and creation closes after activation, so repeats are pre-armed as
+-- a bounded chain of one-shot ticks while the window is open. The bound fits
+-- the tightest host timer budget (mock `TIMERS_MAX` 32; production admits
+-- 64), so a full chain always arms on either host; a plan that still exceeds
+-- the budget arms a prefix and degrades to fewer repeats, never a violation.
+M.TIMER_CHAIN_CAP = 32
+-- Minimum chained ticks per timer module: the repeat proof advances twice
+-- (fresh values, rollover), so even the largest plan repeats at least twice.
+M.TIMER_CHAIN_MIN = 2
+
+-- Chained ticks per timer module (first tick plus follow-ups) for a plan
+-- with `count` timer modules, sharing the cap evenly. 0 when the plan has
+-- no timer module.
+function M.chain_ticks(count)
+  if not is_integer(count) or count < 1 then
+    return 0
+  end
+  local per = math.floor(M.TIMER_CHAIN_CAP / count)
+  if per < M.TIMER_CHAIN_MIN then
+    per = M.TIMER_CHAIN_MIN
+  end
+  if per > M.TIMER_CHAIN_CAP then
+    per = M.TIMER_CHAIN_CAP
+  end
+  return per
+end
+
 -- Applies the line byte bound across atoms; the atom that crosses the bound
 -- is cut on a character boundary and everything after it is dropped.
 function M.clip(atoms, max_bytes)
@@ -2277,43 +2305,89 @@ local function render()
   bitty.ui.update(block, build_component())
 end
 
--- Arms one timer module: a single `timers.create` tick at the module cadence.
--- The callback re-renders and re-arms optimistically; Plugin API v1 closes
--- timer creation after activation (ADR 0009 LUA-OQ-12), so the re-arm fails
--- closed and the tick is one-shot today, while a host with repeating timers
--- needs no bar change. Called only while the bar is visible (pause-on-hidden).
-local function arm_timer(name, spec)
+-- Arms one timer module (bar#17): the first tick at the module cadence plus
+-- follow-up ticks at multiples of the cadence, all pre-armed while the
+-- activation window is open. Every tick re-polls providers and re-renders,
+-- so repeated timer advances repaint with fresh values with no
+-- post-activation `timers.create`. The first tick additionally re-arms one
+-- single tick optimistically; Plugin API v1 closes timer creation after
+-- activation (ADR 0009 LUA-OQ-12), so that re-arm fails closed on v1 hosts
+-- (the pre-armed chain already covers the repeats) while a host with
+-- repeating timers continues past the chain with no bar change. Follow-up
+-- ticks render only, so a repeating host never accumulates parallel loops.
+-- Called only while the bar is visible (pause-on-hidden).
+local function arm_timer(name, spec, extra)
   local def = M.MODULES[name]
   local ms = M.tick_ms(def, spec.options)
   if ms == nil then
     return
   end
-  local ok, handle = pcall(function()
-    return bitty.timers.create(ms, function()
-      timers[name] = nil
-      render()
-      arm_timer(name, spec)
+  if not is_integer(extra) or extra < 0 then
+    extra = 0
+  end
+  local function arm_once(delay_ms, rearm)
+    local ok, handle = pcall(function()
+      return bitty.timers.create(delay_ms, function()
+        render()
+        if rearm then
+          arm_once(ms, true)
+        end
+      end)
     end)
-  end)
-  if ok and type(handle) == "number" then
-    timers[name] = handle
+    if ok and type(handle) == "number" then
+      timers[#timers + 1] = handle
+    end
+  end
+  arm_once(ms, true)
+  for k = 2, extra + 1 do
+    arm_once(ms * k, false)
   end
 end
 
+-- Whether the `timers.create` window is open (bar#17): v1 closes timer
+-- creation after activation, so a `config.reloaded` handler must not cancel
+-- the live activation chain it cannot replace. The probe creates and cancels
+-- one zero-delay timer; only openness is read (the handle is dropped
+-- immediately either way).
+local function registration_open()
+  local ok, handle = pcall(function()
+    return bitty.timers.create(0, function() end)
+  end)
+  if ok and type(handle) == "number" then
+    pcall(bitty.timers.cancel, handle)
+    return true
+  end
+  return false
+end
+
 -- (Re)creates the timer set for the current plan; called at activation and on
--- config.reloaded. Hidden bars arm nothing (pause-on-hidden).
+-- config.reloaded. Hidden bars arm nothing (pause-on-hidden). Past the
+-- activation window the live chain is kept (every chained tick re-polls the
+-- reloaded plan through the shared `render`, at the previous cadences) and
+-- only an immediate re-render is issued by the caller.
 local function reschedule()
-  for _, handle in pairs(timers) do
+  if not registration_open() then
+    return
+  end
+  for _, handle in ipairs(timers) do
     pcall(bitty.timers.cancel, handle)
   end
   timers = {}
   if not M.visible(bitty.workspace.list(), opts) then
     return
   end
+  local count = 0
   for _, spec in ipairs(opts.specs) do
     local def = M.MODULES[spec.name]
     if def ~= nil and def.tick_ms ~= nil then
-      arm_timer(spec.name, spec)
+      count = count + 1
+    end
+  end
+  local per = M.chain_ticks(count)
+  for _, spec in ipairs(opts.specs) do
+    local def = M.MODULES[spec.name]
+    if def ~= nil and def.tick_ms ~= nil then
+      arm_timer(spec.name, spec, per - 1)
     end
   end
 end

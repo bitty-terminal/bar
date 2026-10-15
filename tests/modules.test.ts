@@ -171,17 +171,18 @@ describe("per-module cadence (timer modules)", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("v1 one-shot timers stay under the rate policy (no re-arm violation)", async () => {
+  test("chained one-shots repaint on every cadence tick (bar#17)", async () => {
     const run = await bar({
       workspaces: THREE,
       settings: { modules_left: ["clock"] },
     });
     run.host.advanceTimers(60000);
     expect(run.updates()).toBe(1);
-    // Plugin API v1 closes timer creation after activation, so the optimistic
-    // re-arm fails closed: no second tick and no recorded violation.
+    // Repeats are pre-armed as a bounded chain while the activation window
+    // is open (v1 closes post-activation creation, so there is no re-arm to
+    // fail): the next cadence tick repaints again with no violation.
     run.host.advanceTimers(60000);
-    expect(run.updates()).toBe(1);
+    expect(run.updates()).toBe(2);
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -396,6 +397,34 @@ describe("pure chassis helpers", () => {
     expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 100 })).toBe(200);
     expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 200 })).toBe(200);
     expect(mod["tick_ms"]({}) ?? null).toBeNull();
+  });
+
+  test("chain_ticks shares the timer cap across the plan (bar#17)", () => {
+    expect(mod["chain_ticks"](0)).toBe(0);
+    expect(mod["chain_ticks"](-1)).toBe(0);
+    expect(mod["chain_ticks"](1)).toBe(32);
+    expect(mod["chain_ticks"](2)).toBe(16);
+    expect(mod["chain_ticks"](10)).toBe(3);
+    expect(mod["chain_ticks"](11)).toBe(2);
+    // Even the largest plan repeats at least twice (the repeat proof
+    // advances twice); excess past the host cap degrades to fewer repeats.
+    expect(mod["chain_ticks"](100)).toBe(2);
+  });
+
+  test("clock_text changes across a minute rollover", () => {
+    const clockText = mod["clock_text"] as (
+      format: string,
+      now: number,
+    ) => string;
+    // Ten seconds before a minute boundary in any timezone: +20 s crosses it.
+    const base = 1790000000;
+    const before = base - (base % 60) + 50;
+    const after = before + 20;
+    const first = clockText("%H:%M", before);
+    const second = clockText("%H:%M", after);
+    expect(first).toMatch(/^\d\d:\d\d$/);
+    expect(second).toMatch(/^\d\d:\d\d$/);
+    expect(second).not.toBe(first);
   });
 
   test("entry_module accepts a name string or a table entry", () => {
