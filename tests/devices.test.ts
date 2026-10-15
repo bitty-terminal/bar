@@ -10,11 +10,20 @@
  * resolves exactly like an ungranted or absent provider.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { LuaFactory, type LuaEngine } from "wasmoon";
 
 import {
   activateBar,
   type BarRun,
+  ENTRY_SOURCE,
   type ServiceImpl,
   textOf,
   ws,
@@ -163,7 +172,12 @@ describe("network module (bitty#2012)", () => {
     expect(failing.host.handlerViolations).toEqual([]);
   });
 
-  test("a custom format overrides the whole text with clean gaps", async () => {
+  test("a custom format is inert under v1 settings; the default renders", async () => {
+    // Per-module option tables read as [] under the v1 declared-keys gate
+    // (see bitty-plugin.toml): the custom template below is stored but never
+    // served, so the module renders its default text. The template engine
+    // itself stays covered by the pure suite below and lights up unchanged
+    // when table settings land.
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -172,7 +186,7 @@ describe("network module (bitty#2012)", () => {
       },
       services: { "network.state": { version: "1.0.0", impl: NETWORK_STATE } },
     });
-    expect(painted(run)).toBe("wifi down 8.0K up 4.0K");
+    expect(painted(run)).toBe("wifi 8.0K/4.0K");
   });
 
   test("the network poll floor is 3s", async () => {
@@ -232,7 +246,10 @@ describe("bluetooth module (bitty#2017)", () => {
     ]);
   });
 
-  test("toggle binds only with the control head and flips power", async () => {
+  test("toggle defaults off (read-only); the control command still flips power", async () => {
+    // The `toggle` option table is inert under v1 settings, so the atom stays
+    // read-only with the detail fallback; the registered toggle command itself
+    // needs no option and still flips power through the control head.
     const calls: unknown[] = [];
     const run = await bar({
       workspaces: THREE,
@@ -251,7 +268,10 @@ describe("bluetooth module (bitty#2017)", () => {
       },
     });
     expect(run.component().children![0]!.on_click).toEqual({
-      command: "bitty-terminal.bar:bluetooth-toggle",
+      command: "bitty-terminal.bar:detail",
+      args: {
+        text: "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
+      },
     });
     expect(
       run.host.dispatchCommand("bitty-terminal.bar:bluetooth-toggle"),
@@ -354,7 +374,10 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
     expect(calls).toEqual([10]);
   });
 
-  test("the step option drives the click delta", async () => {
+  test("a custom step is inert under v1 settings; the default step binds", async () => {
+    // The `step` option table reads as [] under the v1 declared-keys gate
+    // (see bitty-plugin.toml), so the click carries the default step of 10.
+    // Step validation itself stays covered by the pure suite below.
     const run = await bar({
       workspaces: THREE,
       settings: { modules_left: ["backlight"], backlight: { step: -5 } },
@@ -368,7 +391,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
     });
     expect(run.component().children![0]!.on_click).toEqual({
       command: "bitty-terminal.bar:backlight-step",
-      args: { delta: -5 },
+      args: { delta: 10 },
     });
   });
 
@@ -456,7 +479,11 @@ describe("idle-inhibit module (bitty#2020)", () => {
     expect(calls).toEqual([false]);
   });
 
-  test("activated/deactivated glyphs stay config-side", async () => {
+  test("custom glyphs are inert under v1 settings; the defaults render", async () => {
+    // The `on_text`/`off_text` option tables read as [] under the v1
+    // declared-keys gate (see bitty-plugin.toml). Glyph selection itself
+    // stays covered by the pure suite below and lights up unchanged when
+    // table settings land.
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -467,7 +494,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
         "idle.state": { version: "1.0.0", impl: idleState(false) },
       },
     });
-    expect(painted(run)).toBe("NO");
+    expect(painted(run)).toBe("inhibit:off");
   });
 
   test("a denied toggle degrades to notify", async () => {
@@ -510,5 +537,107 @@ describe("idle-inhibit module (bitty#2020)", () => {
       settings: { modules_left: ["idle", "workspaces"] },
     });
     expect(painted(ungranted)).toBe("1:ws1 4:code* 9:logs (3)");
+  });
+});
+
+describe("device option logic (pure, no settings gate)", () => {
+  // Per-module option tables are inert through v1 settings integration (see
+  // bitty-plugin.toml), but the Lua option logic itself is unchanged: these
+  // pure tests call the render helpers with option tables directly, so the
+  // logic lights up unchanged when table settings land host-side.
+  const factory = new LuaFactory();
+  let lua: LuaEngine;
+  let mod: Record<string, (...args: unknown[]) => unknown>;
+
+  beforeAll(async () => {
+    lua = await factory.createEngine({ injectObjects: false });
+    mod = (await lua.doString(ENTRY_SOURCE)) as typeof mod;
+  });
+
+  afterAll(() => {
+    lua.global.close();
+  });
+
+  test("network_text honors a custom template with clean gaps", async () => {
+    const data = { link: "wifi", down_bps: 8000, up_bps: 4000 };
+    expect(
+      await mod["network_text"](
+        data,
+        undefined,
+        { format: "{link} down {down} up {up} {essid}" },
+      ),
+    ).toBe("wifi down 8.0K up 4.0K");
+    expect(
+      await mod["network_text"](data, "Home", {
+        format: "{link}({essid})",
+      }),
+    ).toBe("wifi(Home)");
+    expect(await mod["network_text"](data, undefined, {})).toBe(
+      "wifi 8.0K/4.0K",
+    );
+  });
+
+  test("bluetooth_text honors a custom template", async () => {
+    const data = { powered: true, connected_count: 1, total_count: 2 };
+    expect(
+      await mod["bluetooth_text"](data, {
+        format: "{status} {connected}/{total}",
+      }),
+    ).toBe("on 1/2");
+    expect(await mod["bluetooth_text"](data, {})).toBe("bt on (1/2)");
+    expect(
+      await mod["bluetooth_text"]({ powered: "yes" }, {}),
+    ).toBeNil();
+  });
+
+  test("backlight_text honors a custom template; steps validate bounded", async () => {
+    expect(
+      await mod["backlight_text"]({ pct: 75 }, { format: "{pct}!" }),
+    ).toBe("75!");
+    expect(await mod["backlight_text"]({ pct: 75 }, {})).toBe("75%");
+    expect(await mod["valid_step"](10)).toBe(true);
+    expect(await mod["valid_step"](-5)).toBe(true);
+    expect(await mod["valid_step"](101)).toBe(false);
+    expect(await mod["valid_step"](1.5)).toBe(false);
+  });
+
+  test("idle_text keeps the glyphs config-side", async () => {
+    expect(
+      await mod["idle_text"](
+        { inhibited: false },
+        { on_text: "YES", off_text: "NO" },
+      ),
+    ).toBe("NO");
+    expect(
+      await mod["idle_text"](
+        { inhibited: true },
+        { on_text: "YES", off_text: "NO" },
+      ),
+    ).toBe("YES");
+    expect(await mod["idle_text"]({ inhibited: true }, {})).toBe(
+      "inhibit:on",
+    );
+    expect(await mod["idle_text"]({ inhibited: false }, {})).toBe(
+      "inhibit:off",
+    );
+  });
+
+  test("module_options filters one module table by its registry keys", async () => {
+    const get = (key: string): unknown => {
+      if (key === "bluetooth") return { toggle: true, bogus: 1 };
+      if (key === "clock") return { format: "T", tick_ms: 1 };
+      return undefined;
+    };
+    expect(await mod["module_options"](get, "bluetooth")).toEqual({
+      toggle: true,
+    });
+    expect(await mod["module_options"](get, "clock")).toEqual({
+      format: "T",
+      tick_ms: 1,
+    });
+    expect(await mod["module_options"](get, "cpu")).toEqual({});
+    expect(
+      await mod["module_options"](() => undefined, "bluetooth"),
+    ).toEqual({});
   });
 });

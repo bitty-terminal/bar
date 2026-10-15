@@ -246,7 +246,12 @@ describe("cpu module", () => {
     }
   });
 
-  test("per-module options override format and thresholds", async () => {
+  test("module option tables are inert under v1; shipped defaults render", async () => {
+    // The `cpu` option table reads as [] under the v1 declared-keys gate
+    // (see bitty-plugin.toml), so the custom format and marks below are
+    // stored but never served: the module renders its defaults (72% is below
+    // the default 80 warning mark). Threshold composition itself stays
+    // covered by the pure suite above.
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -258,11 +263,14 @@ describe("cpu module", () => {
         [CPU]: { snapshot: { ...CPU_SNAP, total_pct: 72 } },
       },
     });
-    expect(painted(run)).toBe("[72]");
-    expect(sensorLeaf(run, "[72]").fg).toBe("warning");
+    expect(painted(run)).toBe("72%");
+    expect(sensorLeaf(run, "72%").fg).toBeUndefined();
   });
 
   test("inverted thresholds fall back to the shipped defaults", async () => {
+    // Under v1 settings the marks table below is inert (see bitty-plugin.toml),
+    // so this renders the shipped defaults; inversion composition itself stays
+    // covered by the pure thresholds suite above.
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -348,16 +356,18 @@ describe("cpu module", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("a per-module tick_ms override changes the cadence", async () => {
+  test("the cpu ticks at its 2s default cadence", async () => {
+    // Per-module tick_ms tables are inert under v1 settings (see
+    // bitty-plugin.toml): the module arms its default 2 s ceiling.
     const run = await bar({
       workspaces: THREE,
       settings: { modules_left: ["cpu"], cpu: { tick_ms: 5000 } },
       grants: SENSOR_GRANTS,
       services: { [CPU]: { snapshot: CPU_SNAP } },
     });
-    run.host.advanceTimers(2000);
+    run.host.advanceTimers(1999);
     expect(run.updates()).toBe(0);
-    run.host.advanceTimers(5000);
+    run.host.advanceTimers(1);
     expect(run.updates()).toBe(1);
     expect(run.host.handlerViolations).toEqual([]);
   });
@@ -447,7 +457,7 @@ describe("battery module", () => {
     expect(sensorLeaf(run, "[=   ]+ 12%").fg).toBeUndefined();
   });
 
-  test("a discharging battery alarms low, with custom marks honored", async () => {
+  test("a discharging battery alarms low on the shipped marks", async () => {
     for (const [capacity, fg] of [
       [50, undefined],
       [25, "warning"],
@@ -477,7 +487,11 @@ describe("battery module", () => {
         [BATTERY]: { snapshot: { ...BATTERY_SNAP, capacity_pct: 45 } },
       },
     });
-    expect(sensorLeaf(custom, "[==  ] 45%").fg).toBe("warning");
+    // The custom marks above are inert under v1 settings (see
+    // bitty-plugin.toml): 45% discharging reads normal against the shipped
+    // 30/15 defaults. Mark composition itself stays covered by the pure
+    // low_state suite above.
+    expect(sensorLeaf(custom, "[==  ] 45%").fg).toBeUndefined();
   });
 
   test("power and time-to-empty ride the detail fallback", async () => {

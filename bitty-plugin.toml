@@ -21,6 +21,28 @@ license = "MIT"
 bitty = ">=0.5,<1.0"
 plugin-api = "^1.0"
 
+[services.required]
+# Broker providers the Phase B modules negotiate with an explicit version
+# requirement plus `optional = true` (fail-closed hide while ungranted).
+# Sensor trio (bitty#2019/#2011/#2016) at the Lua `M.SENSOR_VERSION_REQ`;
+# device octa (bitty#2012/#2017/#2020) at `M.DEVICE_VERSION_REQ`; audio trio
+# (bitty#2009/#2013) at `M.AUDIO_VERSION_REQ`. Quoted dotted keys are single
+# interface names (the linter walks them back to dotted form).
+"system.cpu" = "^1.0"
+"system.memory" = "^1.0"
+"system.battery" = "^1.0"
+"network.state" = "^1.0"
+"network.essid" = "^1.0"
+"bluetooth.state" = "^1.0"
+"bluetooth.control" = "^1.0"
+"backlight.state" = "^1.0"
+"backlight.control" = "^1.0"
+"idle.state" = "^1.0"
+"idle.control" = "^1.0"
+"audio.state" = ">=1.0"
+"audio.control" = ">=1.0"
+"audio.spectrum" = ">=1.0"
+
 [capabilities]
 # Deny by default; each capability is requested one by one.
 # - ui.rich: mount and update the workspace bar band (`bitty.ui.mount/update`).
@@ -30,21 +52,77 @@ plugin-api = "^1.0"
 # - platform.notify: the tooltip→notify fallback (`bitty.notify.show`) for a
 #   module that carries detail text but no click command; best-effort and
 #   fail-closed when ungranted.
-# - Device heads (`platform.network.read`, `platform.essid.read`,
+# - Phase B sensor heads (`platform.cpu-read`, `platform.memory-read`,
+#   `platform.battery-read`, CTX-1218/bitty#2019/#2011/#2016): read-only
+#   provider backing for the cpu/memory/battery modules (one head per
+#   provider, never high-risk).
+# - Phase B device heads (`platform.network.read`, `platform.essid.read`,
 #   `platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
-#   `platform.idle.read/.control`) are NOT requested yet: the pinned SDK
-#   closed set rejects them (`capabilities.unknown`), so the Phase B modules
-#   resolve their providers with `optional = true` and hide while ungranted.
-#   Request the read heads (plus each control head only for the toggle/step
-#   variants) once the SDK admits them; no Lua change is needed.
-# - Audio heads (`audio.state.read`, `audio.state.control`, `audio.spectrum`)
-#   ride the SDK closed-set parity follow-up: the modules negotiate the broker
-#   interfaces optionally and hide until granted, so no manifest entry is
-#   declared until the linter accepts the heads (CTX-1220).
+#   `platform.idle.read/.control`, CTX-1219/bitty#2012/#2017/#2020): the
+#   separately-granted ESSID sub-interface plus read/control splits (read
+#   never implies control; control heads arm the toggle/step click variants
+#   only, denial degrades to notify, DEC-0115).
+# - Phase B audio heads (`audio.state.read`, `audio.state.control`,
+#   `audio.spectrum`, CTX-1220/bitty#2009/#2013): volume/mute/port snapshot,
+#   bounded control, and the 5 Hz cava-lite meter (read never implies
+#   control). Spellings verified against bitty main
+#   `crates/bitty-plugin-host/src/capability.rs` and the SDK#152 closed set.
 ui.rich = true
 workspace.read = true
 workspace.control = true
 platform.notify = true
+platform.cpu-read = true
+platform.memory-read = true
+platform.battery-read = true
+platform.network.read = true
+platform.essid.read = true
+platform.bluetooth.read = true
+platform.bluetooth.control = true
+platform.backlight.read = true
+platform.backlight.control = true
+platform.idle.read = true
+platform.idle.control = true
+audio.state.read = true
+audio.state.control = true
+audio.spectrum = true
+
+[settings]
+# Declared settings keys read through `bitty.settings.get` (bitty#2010 /
+# CTX-1195; an undeclared read fails closed with `E_SETTINGS_UNDECLARED`,
+# so every key below must be declared or activation aborts).
+# - Chassis scalars (`show`, `edge`, `show_single`, `name_max_chars`) mirror
+#   `M.DEFAULTS`; the module-group lists (`modules_left/_center/_right`)
+#   mirror `M.MODULE_GROUPS` (absent groups fall back to the default plan).
+# - Per-module option collections (`workspaces`, `clock`, `network`,
+#   `bluetooth`, `backlight`, `idle`, `pulseaudio`, `spectrum`, `cpu`,
+#   `memory`, `battery`) are read as one table per module name
+#   (`M.module_options`). The v1 settings contract has no table or dot-path
+#   form (host `SettingKind`, SDK closed types, flat file grammar), so each
+#   is declared `string-array` with an empty default: unset reads serve []
+#   (no options, module defaults win) and stored tables mismatch the kind
+#   and likewise read as [], exactly the fail-to-default posture. Per-module
+#   user options stay inert on strict hosts until a table/dot-path settings
+#   follow-up lands host- and SDK-side; no Lua change is needed when it
+#   does (the reads already tolerate absent tables). Types and bounds mirror
+#   the host `SettingDecl::validate` via the SDK#152 linter.
+show = { type = "bool", default = true }
+edge = { type = "string", default = "bottom" }
+show_single = { type = "bool", default = false }
+name_max_chars = { type = "int", default = 32 }
+modules_left = { type = "string-array", default = ["workspaces"] }
+modules_center = { type = "string-array", default = [] }
+modules_right = { type = "string-array", default = [] }
+workspaces = { type = "string-array", default = [] }
+clock = { type = "string-array", default = [] }
+network = { type = "string-array", default = [] }
+bluetooth = { type = "string-array", default = [] }
+backlight = { type = "string-array", default = [] }
+idle = { type = "string-array", default = [] }
+pulseaudio = { type = "string-array", default = [] }
+spectrum = { type = "string-array", default = [] }
+cpu = { type = "string-array", default = [] }
+memory = { type = "string-array", default = [] }
+battery = { type = "string-array", default = [] }
 
 [lazy]
 # Static triggers let the host register the plugin without creating a VM.
