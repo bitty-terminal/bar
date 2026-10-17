@@ -43,6 +43,7 @@ export interface SceneNode {
   readonly children?: readonly SceneNode[];
   readonly bold?: boolean;
   readonly fg?: string;
+  readonly bg?: string;
   readonly on_click?: {
     readonly command: string;
     readonly args?: Readonly<Record<string, unknown>>;
@@ -56,13 +57,23 @@ export interface MountRecord {
 }
 
 /** Workspace row with the defaults the bridge fills in. */
-export function ws(id: number, name: string, active = false): WorkspaceInfo {
+export function ws(
+  id: number,
+  name: string,
+  active = false,
+  panelCount = 0,
+  attention: WorkspaceInfo["attention"] = {
+    bell: false,
+    activity: false,
+    exited: false,
+  },
+): WorkspaceInfo {
   return {
     id,
     name,
     active,
-    panel_count: 1,
-    attention: { bell: false, activity: false, exited: false },
+    panel_count: panelCount,
+    attention,
   };
 }
 

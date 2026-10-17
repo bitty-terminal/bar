@@ -3,26 +3,30 @@
 Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.
 
 [ADR-0014](https://github.com/bitty-terminal/bitty-docs/blob/main/docs/decisions/adrs/ADR-0014-workspace-core-presentation-plugins.md)
-keeps Workspace as a Core mechanism and moves every workspace presentation
-into plugins. This plugin's first module is the workspace bar: it renders what
-the retired Core workspaceline drew, over the Plugin API v1 surface only.
+keeps Workspace as a Core mechanism and moves every workspace presentation into
+plugins. This plugin's first module is a Waybar-like workspace bar over the
+Plugin API v1 surface.
 
-> Status: pre-implementation. Behavior is verified against the
-> bitty-plugin-sdk mock host (pinned by commit), not against a released host.
-> Tabs and statusline modules are not implemented yet.
+> Status: pre-implementation. Behavior is verified against the bitty-plugin-sdk
+> mock host (pinned by commit), not against a released host. Tabs and statusline
+> modules are not implemented yet.
 
 ## Workspace bar
 
-- One pill per workspace, `{position}:{name}`, joined by single spaces and
-  followed by ` ({count})`. The active pill carries `*`, bold, and the
-  `accent` theme token. An empty workspace list renders `—` (fail closed).
-- Names are cut to 32 characters (or `name_max_chars`); the whole line is
-  bounded to 1024 UTF-8 bytes, cut on a character boundary.
+- One capsule per workspace, `[stable-id:name]`, joined by single spaces. The
+  active capsule carries `*`; occupied workspaces carry `+` when
+  `panel_count > 0`; and attention (`bell`, `activity`, or `exited`) carries
+  `!`. The active capsule also uses the host `accent` and `background` theme
+  tokens with bold text; occupied and attention capsules use restrained bold or
+  `cursor` emphasis. Each capsule remains one styled `Text` atom.
+- Names are cut to 32 characters (or `name_max_chars`); complete capsules are
+  retained in stable numeric id order and the line is bounded to 1024 UTF-8
+  bytes. A capsule is one clickable `Text` node, so its complete hit area keeps
+  the existing click binding.
 - A lone workspace hides the bar unless `show_single = true`.
-- Clicking an inactive pill runs `bitty-terminal.bar:focus { id }`, which
-  queues `bitty.workspace.focus(id)` by stable id. The active pill,
-  separators, the count suffix, unknown or stale ids, and non-integer ids
-  queue nothing.
+- Clicking an inactive capsule runs `bitty-terminal.bar:focus { id }`, which
+  queues `bitty.workspace.focus(id)` by stable id. The active capsule,
+  separators, unknown or stale ids, and non-integer ids queue nothing.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
   event and re-reads settings on `config.reloaded`.
 
@@ -31,12 +35,28 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
 Keys live under the plugin namespace (`plugins."bitty-terminal.bar"`); absent
 or invalid values fall back to the default.
 
-| Key              | Type    | Default    | Replaces (retired Core key) | Notes                                   |
-| ---------------- | ------- | ---------- | --------------------------- | --------------------------------------- |
-| `show`           | boolean | `true`     | `workspace.show_bar`        | Live on `config.reloaded`.              |
-| `edge`           | string  | `"bottom"` | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
-| `show_single`    | boolean | `false`    | none (Core always hid it)   | Live on `config.reloaded`.              |
-| `name_max_chars` | integer | `32`       | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+| Key              | Type    | Default    | Notes                                   |
+| ---------------- | ------- | ---------- | --------------------------------------- |
+| `show`           | boolean | `true`     | Live on `config.reloaded`.              |
+| `edge`           | string  | `"bottom"` | `"top"` or `"bottom"`; next generation. |
+| `show_single`    | boolean | `false`    | Live on `config.reloaded`.              |
+| `name_max_chars` | integer | `32`       | `1..32`; live on `config.reloaded`.     |
+
+Users customize these keys through the generic plugin TOML configuration at
+`$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.toml` (with the standard
+`~/.config` fallback), for example:
+
+```toml
+[plugins."bitty-terminal.bar"]
+edge = "top"
+show_single = true
+name_max_chars = 20
+```
+
+The plugin accepts only `top` and `bottom` today. Although Plugin API v1
+accepts `left` and `right` as storage slots, the current Core host does not
+paint vertical bands yet, so accepting those settings would produce an
+invisible bar. Vertical capsules remain a host follow-up.
 
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
@@ -51,11 +71,14 @@ only during activation and v1 has no unmount or move.
 
 Gaps in the current host, not in this plugin:
 
-- The Core host parses `on_click` into the mounted scene but does not yet
-  route band clicks to the bound command, so clicking does nothing on a live
-  host. The mock host is used to exercise the command path.
-- Band painting ignores `fg`, `bg`, and `bold`. The active pill stays
-  identifiable through the `*` mark.
+- The Core host parses `on_click` into the mounted scene but does not yet route
+  band clicks to the bound command, so clicking does nothing on a live host. The
+  mock host is used to exercise the command path.
+- The current host has no capsule style atom; active, occupied, and attention
+  states use supported `Text` styling plus textual markers.
+- `left` and `right` mounts are accepted and stored by Core but are not painted
+  until vertical bands ship; the plugin intentionally rejects them and falls
+  back to `bottom`.
 - Plugin bands reserve no exclusive zone. They overlay the edge content row
   instead of reflowing the grid the way the Core band did.
 - An empty (hidden) band still takes a stacking index on its edge.
@@ -66,14 +89,14 @@ Gaps in the current host, not in this plugin:
 
 ## Layout
 
-| Path                          | Purpose                                                                    |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers. |
-| `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`. |
-| `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.       |
-| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline.                         |
-| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                          |
-| `justfile`                    | Quality gates with pinned tool versions.                                   |
+| Path                          | Purpose                                                              |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `bitty-plugin.toml`           | Static manifest, compatibility, capabilities, and lazy triggers.     |
+| `lua/bar/init.lua`            | Entry point and pure capsule rendering helpers.                      |
+| `tests/harness.ts`            | Lua 5.4 VM and SDK mock-host bridge.                                 |
+| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline bounds.            |
+| `tests/bar.test.ts`           | Capsule states, bounds, clicks, edge settings, and capability gates. |
+| `justfile`                    | Quality gates with pinned tool versions.                             |
 
 ## Development
 
@@ -83,13 +106,12 @@ just check     # manifest lint, Lua 5.1 grammar parse + control, bun tests
 ```
 
 `just manifest` runs the authoritative `bitty-plugin-lint` from
-[bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk). `just
-lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar) and
-`just lua-control` proves the parser rejects invalid input. `just test` runs the
-entry point against the SDK `MockHost`, which owns capability gates, the
-activation registration window, scene-node validation, command argument
-schemas, event declarations, and the bounded workspace request queue; the
-parity tests compare every painted column with the Core reference model.
+[bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk).
+`just lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar)
+and `just lua-control` proves the parser rejects invalid input. `just test` runs
+the entry point against the SDK `MockHost`, which owns capability gates,
+registration, scene validation, command schemas, events, and the bounded
+workspace request queue.
 
 ## Security
 

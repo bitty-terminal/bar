@@ -1,10 +1,8 @@
 -- Entry point for Unified Bar (bitty-terminal.bar): the workspace bar.
 --
 -- ADR-0014 keeps Workspace as a Core mechanism and moves every workspace
--- presentation into plugins. This file renders the presentation the retired
--- Core workspaceline drew (bitty-runtime `workspaceline_text`,
--- `workspaceline_hit_test`, `workspaceline_click`) over the Plugin API v1
--- surface only: `bitty.workspace.list/focus` (workspace.read /
+-- presentation into plugins. This file renders a Waybar-like capsule list over
+-- the Plugin API v1 surface only: `bitty.workspace.list/focus` (workspace.read /
 -- workspace.control), the `workspace.*` events, `bitty.settings`, and one
 -- `bitty.ui.mount` band. The authoritative bindings are the SDK `bitty.d.lua`
 -- (R-SDK-1); nothing outside that contract is used.
@@ -29,13 +27,16 @@ M.LINE_MAX_BYTES = 1024 -- WORKSPACELINE_MAX_CHARS (UTF-8 bytes, char-boundary c
 M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
 
 M.ACTIVE_MARK = "*"
+M.OCCUPIED_MARK = "+"
+M.ATTENTION_MARK = "!"
+M.PILL_OPEN = "["
+M.PILL_CLOSE = "]"
 M.SEPARATOR = " "
 -- Fail-closed placeholder for an empty workspace list (U+2014 EM DASH).
 M.EMPTY_PLACEHOLDER = "\226\128\148"
--- Theme token for the active pill; host-resolved, never a raw color.
-M.ACTIVE_FG = "accent"
-
 -- Accepted bar edges and the band slot each one mounts into.
+-- The v1 host accepts left/right as storage slots but does not paint vertical
+-- bands yet. Keep those values out of the setting until vertical bands ship.
 M.EDGE_SLOTS = { top = "top", bottom = "bottom" }
 
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
@@ -60,13 +61,33 @@ end
 -- `truncate_ws_name`, which counts Rust `char`s).
 function M.truncate_chars(text, max_chars)
   local out = {}
+  local index = 1
   local count = 0
-  for char in string.gmatch(text, "[^\128-\191][\128-\191]*") do
-    if count >= max_chars then
-      break
+  while index <= #text and count < max_chars do
+    local first = string.byte(text, index)
+    local width = 1
+    if first >= 194 and first <= 223 then
+      width = 2
+    elseif first >= 224 and first <= 239 then
+      width = 3
+    elseif first >= 240 and first <= 244 then
+      width = 4
+    end
+    local last = index + width - 1
+    if last > #text then
+      width = 1
+    else
+      for continuation = index + 1, last do
+        local byte = string.byte(text, continuation)
+        if byte < 128 or byte > 191 then
+          width = 1
+          break
+        end
+      end
     end
     count = count + 1
-    out[count] = char
+    out[count] = string.sub(text, index, index + width - 1)
+    index = index + width
   end
   return table.concat(out)
 end
@@ -123,73 +144,107 @@ function M.visible(rows, opts)
   return #rows ~= 1 or opts.show_single
 end
 
--- Ordered bar segments before the byte bound: one pill per workspace
--- (`{1-based}:{name}` plus `*` on the active one), single-space separators,
--- and the ` ({count})` suffix. The concatenated text equals Core
--- `workspaceline_text` for the same rows.
+-- Core supplies rows in display order. Sorting a bounded copy by stable id
+-- keeps the capsule order deterministic if a host delivers an equivalent
+-- snapshot in a different iteration order, without mutating host data.
+function M.ordered_rows(rows)
+  local out = {}
+  for index, row in ipairs(rows) do
+    out[index] = row
+  end
+  for index = 2, #out do
+    local row = out[index]
+    local cursor = index - 1
+    while cursor >= 1 and out[cursor].id > row.id do
+      out[cursor + 1] = out[cursor]
+      cursor = cursor - 1
+    end
+    out[cursor + 1] = row
+  end
+  return out
+end
+
+-- Ordered bar segments before the byte bound: one capsule per workspace.
 function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
   end
+  local ordered = M.ordered_rows(rows)
   local out = {}
-  local count = math.min(#rows, M.MAX_WORKSPACES)
+  local count = math.min(#ordered, M.MAX_WORKSPACES)
   for index = 1, count do
-    local row = rows[index]
+    local row = ordered[index]
     if index > 1 then
       out[#out + 1] = { kind = "separator", text = M.SEPARATOR }
     end
-    local mark = row.active and M.ACTIVE_MARK or ""
+    local marks = ""
+    if row.active == true then
+      marks = marks .. M.ACTIVE_MARK
+    end
+    if type(row.panel_count) == "number" and row.panel_count > 0 then
+      marks = marks .. M.OCCUPIED_MARK
+    end
+    local attention = row.attention
+    if attention ~= nil and
+        (attention.bell == true or attention.activity == true or attention.exited == true) then
+      marks = marks .. M.ATTENTION_MARK
+    end
+    local label = tostring(row.id) .. ":" .. M.truncate_chars(row.name, opts.name_max_chars)
+    if marks ~= "" then
+      label = label .. marks
+    end
     out[#out + 1] = {
       kind = "pill",
-      text = index .. ":" .. M.truncate_chars(row.name, opts.name_max_chars) .. mark,
+      text = M.PILL_OPEN .. label .. M.PILL_CLOSE,
       id = row.id,
       active = row.active == true,
+      occupied = type(row.panel_count) == "number" and row.panel_count > 0,
+      attention = attention ~= nil and
+        (attention.bell == true or attention.activity == true or attention.exited == true),
     }
   end
-  out[#out + 1] = { kind = "suffix", text = " (" .. count .. ")" }
   return out
 end
 
--- Applies the line byte bound across segments; the segment that crosses the
--- bound is cut on a character boundary and everything after it is dropped.
+-- Applies the line byte bound without cutting a capsule in half. This keeps
+-- every painted item a complete, clickable atom.
 function M.clip(segments, max_bytes)
   local out = {}
   local used = 0
   for _, segment in ipairs(segments) do
-    local remaining = max_bytes - used
-    if remaining <= 0 then
-      break
-    end
     local text = segment.text
-    if #text > remaining then
-      text = M.truncate_bytes(text, remaining)
-    end
-    if text ~= "" then
-      local copy = {}
-      for key, value in pairs(segment) do
-        copy[key] = value
-      end
-      copy.text = text
-      out[#out + 1] = copy
-      used = used + #text
-    end
-    if text ~= segment.text then
+    if used + #text > max_bytes then
       break
     end
+    local copy = {}
+    for key, value in pairs(segment) do
+      copy[key] = value
+    end
+    out[#out + 1] = copy
+    used = used + #text
+  end
+  if out[#out] ~= nil and out[#out].kind == "separator" then
+    out[#out] = nil
   end
   return out
 end
 
--- Scene node for one segment. Only inactive pills are clickable: separators,
--- the count suffix, and the active pill switch nothing (Core
--- `workspaceline_hit_test` / `workspaceline_click`).
+-- Scene node for one segment. A capsule is one Text atom, the supported v1
+-- primitive that can carry both the existing click binding and host theme
+-- styling without inventing an unsupported node kind.
 local function segment_node(segment)
   local node = { kind = "Text", text = segment.text }
   if segment.kind == "pill" then
     if segment.active then
+      node.fg = "background"
+      node.bg = "accent"
       node.bold = true
-      node.fg = M.ACTIVE_FG
-    else
+    elseif segment.attention then
+      node.fg = "cursor"
+    elseif segment.occupied then
+      node.bold = true
+    end
+    if not segment.active then
       node.on_click = { command = M.FOCUS_COMMAND, args = { id = segment.id } }
     end
   end
