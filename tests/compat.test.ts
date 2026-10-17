@@ -1,12 +1,10 @@
 /**
  * Compat-floor regression (bar#13, P0).
  *
- * The `>=0.5,<1.0` template default rejected host 0.0.22 with EXIT=4, so no
- * module could activate. The floor is now `>=0.0.21,<0.1` (composer parity).
- * These tests pin that decision: the manifest must keep admitting the
- * verified 0.0.x host line and keep the restrictive `<0.1` ceiling, so a
- * future floor bump that re-blocks the current host fails here instead of
- * in VM-headed verification.
+ * The compatibility floor intentionally targets host 0.0.24. These tests pin
+ * that decision: the manifest must admit 0.0.24, reject every pre-floor 0.0.x
+ * host, and keep the restrictive `<0.1` ceiling, so an accidental floor or
+ * ceiling change fails here instead of in VM-headed verification.
  *
  * Range evaluation below mirrors the host resolver
  * (`bitty/crates/bitty-runtime/src/plugin_runtime/package.rs`
@@ -24,11 +22,17 @@ import { MOCK_PLUGIN_API_VERSION, versionReqProblem } from "bitty-plugin-sdk";
 
 import { MANIFEST_SOURCE } from "./harness.js";
 
-/** Current host line the floor must admit (verify2: bitty@1982750e). */
-const VERIFIED_HOSTS = ["0.0.21", "0.0.22"] as const;
+/** Current host line the floor must admit. */
+const VERIFIED_HOSTS = ["0.0.24"] as const;
 
-/** Versions the floor/ceiling must keep rejecting. */
-const REJECTED_BITTY = ["0.0.20", "0.5.0", "1.0.0"] as const;
+/** Versions below the floor or above the ceiling must be rejected. */
+const REJECTED_BITTY = [
+  "0.0.21",
+  "0.0.22",
+  "0.0.23",
+  "0.5.0",
+  "1.0.0",
+] as const;
 
 type Triple = readonly [number, number, number];
 
@@ -142,19 +146,19 @@ function compatValue(key: "bitty" | "plugin-api"): string {
   return match[1];
 }
 
-describe("compat floor (bar#13)", () => {
+describe("compat floor (bar#13, 0.0.24)", () => {
   test("compat.bitty range is syntactically valid per the SDK linter", () => {
     expect(versionReqProblem(compatValue("bitty"))).toBeUndefined();
   });
 
-  test("compat.bitty admits the verified 0.0.x host line", () => {
+  test("compat.bitty admits the 0.0.24 host line", () => {
     const range = compatValue("bitty");
     for (const host of VERIFIED_HOSTS) {
       expect(satisfies(host, range)).toBe(true);
     }
   });
 
-  test("compat.bitty keeps the sub-floor and <0.1-ceiling rejections", () => {
+  test("compat.bitty rejects pre-floor hosts and keeps the <0.1 ceiling", () => {
     const range = compatValue("bitty");
     for (const host of REJECTED_BITTY) {
       expect(satisfies(host, range)).toBe(false);
