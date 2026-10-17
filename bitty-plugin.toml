@@ -35,7 +35,7 @@ license = "MIT"
 # minors may break. Verified: headless `bitty plugin install --yes` on host
 # 0.0.22 (bitty@1982750e) succeeds; the previous floor rejected it with
 # EXIT=4. Revisit on API bumps.
-bitty = ">=0.0.21,<0.1"
+bitty = ">=0.0.24,<0.1"
 plugin-api = "^1.0"
 
 [services.required]
