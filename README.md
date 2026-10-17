@@ -13,17 +13,21 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
 
 ## Workspace bar
 
-- One pill per workspace, `{stable-id}:{name}`, joined by single spaces and
-  followed by ` ({count})`. The id is the stable workspace seq from
-  `bitty.workspace.list()` (Core renders `slot.seq`), so closing a workspace
-  never renumbers the survivors. The active pill carries `*`, bold, and the
-  `accent` theme token. An empty workspace list renders `—` (fail closed).
-- Names are cut to 32 characters (or `name_max_chars`); the whole line is
-  bounded to 1024 UTF-8 bytes, cut on a character boundary.
+- One capsule per workspace, `[stable-id:name]`, joined by single spaces. The
+  id is the stable workspace seq from `bitty.workspace.list()`, so closing a
+  workspace never renumbers the survivors. The active capsule carries `*`,
+  bold, `background` foreground, and the `accent` background theme tokens.
+  Occupied workspaces carry `+` when `panel_count > 0`; attention (`bell`,
+  `activity`, or `exited`) carries `!` with `cursor` emphasis. An empty
+  workspace list renders `—` (fail closed).
+- Names are cut to 32 characters (or `name_max_chars`); complete capsules are
+  retained in stable numeric id order and the line is bounded to 1024 UTF-8
+  bytes. A capsule remains one styled `Text` atom, preserving its complete
+  click target.
 - A lone workspace hides the bar unless `show_single = true`.
-- Clicking an inactive pill runs `bitty-terminal.bar:focus { id }`, which
-  queues `bitty.workspace.focus(id)` by stable id. The active pill,
-  separators, the count suffix, unknown or stale ids, and non-integer ids
+- Clicking an inactive capsule runs `bitty-terminal.bar:focus { id }`, which
+  queues `bitty.workspace.focus(id)` by stable id. The active capsule,
+  separators, scratchpad indicator, unknown or stale ids, and non-integer ids
   queue nothing.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
   event and re-reads settings on `config.reloaded`.
@@ -57,7 +61,7 @@ Each listed name resolves against the in-plugin module registry. A module
 renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip? }` from
 local data or a broker-provided interface and refreshes on its own cadence:
 
-- `workspaces` (event module): the Core-parity pill strip; refreshes from the
+- `workspaces` (event module): the capsule strip; refreshes from the
   `workspace.*` events — no timer where events suffice.
 - `clock` (timer module): `os.date` with a per-module `format` (a restricted,
   zero-grant local source); refreshes on `tick_ms`.
@@ -232,11 +236,11 @@ every row of one `bitty.workspace.list()` result carries the same
 `scratchpad_count` (`0`/`1`) and `scratchpad_occupied` snapshot (Core CTX-0954,
 bitty PR #1671). The bar reads that snapshot tolerantly (the highest valid
 count wins, any presence flag wins; absent or invalid fields read as empty)
-and appends ` [scratchpad]` after the ` ({count})` suffix while the slot is
-occupied. The count rides the state and is shown only when it exceeds the
-single-slot ceiling (` [scratchpad:N]`; never on current hosts, where presence
-alone carries the `0`/`1`). Without an occupied slot the painted text equals
-the Core workspaceline text exactly.
+and appends ` [scratchpad]` after the capsule list while the slot is occupied.
+The count rides the state and is shown only when it exceeds the single-slot
+ceiling (` [scratchpad:N]`; never on current hosts, where presence alone
+carries the `0`/`1`). Without an occupied slot the capsule list has no
+scratchpad segment.
 
 - The indicator is presentation only: it is never clickable and queues no
   request. Occupancy arrives under the existing `workspace.read` grant (the
@@ -281,7 +285,7 @@ Gaps in the current host, not in this plugin:
 - The Core host parses `on_click` into the mounted scene but does not yet
   route band clicks to the bound command, so clicking does nothing on a live
   host. The mock host is used to exercise the command path.
-- Band painting ignores `fg`, `bg`, and `bold`. The active pill stays
+- Band painting ignores `fg`, `bg`, and `bold`. The active capsule stays
   identifiable through the `*` mark.
 - Plugin bands reserve no exclusive zone. They overlay the edge content row
   instead of reflowing the grid the way the Core band did.

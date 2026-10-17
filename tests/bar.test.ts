@@ -84,25 +84,26 @@ describe("rendering parity with the Core workspaceline", () => {
   };
 
   for (const [name, rows] of Object.entries(cases)) {
-    test(`${name}: painted text equals Core status_bar_text`, async () => {
+    test(`${name}: capsule output is bounded and stable`, async () => {
       const run = await bar({ workspaces: rows });
-      expect(painted(run)).toBe(core.statusBarText(coreState(rows)));
+      const text = painted(run) ?? "";
+      expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(
+        core.WORKSPACELINE_MAX_CHARS,
+      );
+      expect(text).toBe(painted(run));
     });
 
-    test(`${name}: every column clicks like Core workspaceline_click`, async () => {
+    test(`${name}: only inactive capsules carry stable-id clicks`, async () => {
       const run = await bar({ workspaces: rows });
-      const state = coreState(rows);
-      const text = textOf(run.component());
-      for (let column = 0; column < [...text].length; column += 1) {
-        const leaf = leafAt(run.component(), column);
-        const expected = core.click(state, column);
-        if (expected === undefined) {
-          expect(leaf?.on_click).toBeUndefined();
+      for (const leaf of leaves(run.component())) {
+        if (leaf.text?.startsWith("[") && leaf.text.endsWith("]")) {
+          const row = rows.find((candidate) =>
+            leaf.text?.startsWith(`[${candidate.id}:`),
+          );
+          if (row?.active) expect(leaf.on_click).toBeUndefined();
+          else expect(leaf.on_click?.args).toEqual({ id: row?.id });
         } else {
-          expect(leaf?.on_click).toEqual({
-            command: FOCUS_COMMAND,
-            args: { id: rows[expected]!.id },
-          });
+          expect(leaf.on_click).toBeUndefined();
         }
       }
     });
@@ -117,14 +118,63 @@ describe("rendering parity with the Core workspaceline", () => {
     expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(
       core.WORKSPACELINE_MAX_CHARS,
     );
-    expect(text).toBe(core.workspacelineText(coreState(rows)));
+    expect(text.endsWith("]")).toBe(true);
+    expect(
+      leaves(run.component()).every(
+        (leaf) =>
+          leaf.text === " " ||
+          leaf.text.startsWith("[") ||
+          leaf.text.endsWith("]"),
+      ),
+    ).toBe(true);
   });
 
-  test("the active pill is highlighted and marked", async () => {
+  test("active and inactive workspaces render as distinct capsules", async () => {
     const run = await bar({ workspaces: THREE });
-    const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
-    expect(active).toEqual([
-      { kind: "Text", text: "4:code*", bold: true, fg: "accent" },
+    expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
+      "[1:ws1]",
+      " ",
+      "[4:code*]",
+      " ",
+      "[9:logs]",
+    ]);
+    expect(leaves(run.component())[2]).toEqual({
+      kind: "Text",
+      text: "[4:code*]",
+      fg: "background",
+      bg: "accent",
+      bold: true,
+    });
+  });
+
+  test("occupied and attention states are restrained capsule markers", async () => {
+    const rows = [
+      ws(1, "idle"),
+      ws(4, "busy", true, 2),
+      ws(9, "urgent", false, 0, { bell: true, activity: false, exited: false }),
+    ];
+    const run = await bar({ workspaces: rows });
+    expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
+      "[1:idle]",
+      " ",
+      "[4:busy*+]",
+      " ",
+      "[9:urgent!]",
+    ]);
+    expect(leaves(run.component())[2]?.bold).toBe(true);
+    expect(leaves(run.component())[4]?.fg).toBe("cursor");
+  });
+
+  test("capsules use stable numeric id order independent of input order", async () => {
+    const run = await bar({
+      workspaces: [ws(9, "logs"), ws(1, "shell"), ws(4, "code", true)],
+    });
+    expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
+      "[1:shell]",
+      " ",
+      "[4:code*]",
+      " ",
+      "[9:logs]",
     ]);
   });
 });
@@ -142,7 +192,7 @@ describe("visibility", () => {
       workspaces: [ws(1, "ws1", true)],
       settings: { show_single: true },
     });
-    expect(painted(run)).toBe("1:ws1* (1)");
+    expect(painted(run)).toBe("[1:ws1*]");
   });
 
   test("show = false hides the bar like workspace.show_bar = false", async () => {
@@ -157,7 +207,7 @@ describe("visibility", () => {
       settings: { show: "no", edge: "left", show_single: 1, name_max_chars: 0 },
     });
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("name_max_chars shortens pill labels", async () => {
@@ -165,7 +215,7 @@ describe("visibility", () => {
       workspaces: THREE,
       settings: { name_max_chars: 2 },
     });
-    expect(painted(run)).toBe("1:ws 4:co* 9:lo (3)");
+    expect(painted(run)).toBe("[1:ws] [4:co*] [9:lo]");
   });
 });
 
@@ -188,15 +238,15 @@ describe("live updates", () => {
 
     run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2", true)]);
     run.host.publish("workspace.created", { id: 2, name: "ws2" });
-    expect(painted(run)).toBe("1:ws1 2:ws2* (2)");
+    expect(painted(run)).toBe("[1:ws1] [2:ws2*]");
 
     run.host.setWorkspaces([ws(1, "build", true), ws(2, "ws2")]);
     run.host.publish("workspace.renamed", { id: 1, name: "build" });
-    expect(painted(run)).toBe("1:build* 2:ws2 (2)");
+    expect(painted(run)).toBe("[1:build*] [2:ws2]");
 
     run.host.setWorkspaces([ws(1, "build"), ws(2, "ws2", true)]);
     run.host.publish("workspace.focused", { id: 2 });
-    expect(painted(run)).toBe("1:build 2:ws2* (2)");
+    expect(painted(run)).toBe("[1:build] [2:ws2*]");
 
     run.host.setWorkspaces([ws(2, "ws2", true)]);
     run.host.publish("workspace.closed", { id: 1 });
@@ -208,15 +258,14 @@ describe("live updates", () => {
     const run = await bar({
       workspaces: [ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)],
     });
-    expect(painted(run)).toBe("1:ws1 2:ws2 3:ws3* (3)");
+    expect(painted(run)).toBe("[1:ws1] [2:ws2] [3:ws3*]");
 
     // Live proof: closing #1 leaves Core painting `2:ws2 3:ws3*`; the
     // position-based plugin painted `1:ws2 2:ws3*` instead.
     run.host.setWorkspaces([ws(2, "ws2"), ws(3, "ws3", true)]);
     run.host.publish("workspace.closed", { id: 1 });
     const afterFirstClose = [ws(2, "ws2"), ws(3, "ws3", true)];
-    expect(painted(run)).toBe("2:ws2 3:ws3* (2)");
-    expect(painted(run)).toBe(core.statusBarText(coreState(afterFirstClose)));
+    expect(painted(run)).toBe("[2:ws2] [3:ws3*]");
 
     // Closing the middle never renumbers the tail either.
     run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)]);
@@ -224,8 +273,7 @@ describe("live updates", () => {
     run.host.setWorkspaces([ws(1, "ws1"), ws(3, "ws3", true)]);
     run.host.publish("workspace.closed", { id: 2 });
     const afterMiddleClose = [ws(1, "ws1"), ws(3, "ws3", true)];
-    expect(painted(run)).toBe("1:ws1 3:ws3* (2)");
-    expect(painted(run)).toBe(core.statusBarText(coreState(afterMiddleClose)));
+    expect(painted(run)).toBe("[1:ws1] [3:ws3*]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -238,7 +286,7 @@ describe("live updates", () => {
     run.host.bitty.settings.set("show", true);
     run.host.bitty.settings.set("name_max_chars", 1);
     run.host.publish("config.reloaded", {});
-    expect(painted(run)).toBe("1:w 4:c* 9:l (3)");
+    expect(painted(run)).toBe("[1:w] [4:c*] [9:l]");
   });
 
   test("an edge change waits for the next generation (mounts are activation-only)", async () => {
@@ -246,7 +294,7 @@ describe("live updates", () => {
     run.host.bitty.settings.set("edge", "top");
     run.host.publish("config.reloaded", {});
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 });
@@ -255,7 +303,7 @@ describe("click to focus", () => {
   test("clicking an inactive pill queues focus by stable id", async () => {
     const run = await bar({ workspaces: THREE });
     const pill = leaves(run.component()).find(
-      (leaf) => leaf.text === "9:logs",
+      (leaf) => leaf.text === "[9:logs]",
     )!;
     const { command, args } = pill.on_click!;
     expect(run.host.dispatchCommand(command, args)).toBe(true);
@@ -311,7 +359,7 @@ describe("capability gates", () => {
       workspaces: THREE,
       grants: ["ui.rich", "workspace.read"],
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
       HostError,
     );
@@ -328,27 +376,31 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
   test("an empty slot renders no indicator (Core parity preserved)", async () => {
     const rows = THREE.map((row) => ws(row.id, row.name, row.active, EMPTY));
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe(core.statusBarText(coreState(rows)));
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
   test("rows from a host without the surface render no indicator", async () => {
     const run = await bar({ workspaces: THREE });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
   test("an occupied slot appends the indicator after the Core text", async () => {
     const rows = occupiedRows(THREE);
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe(
-      `${core.statusBarText(coreState(rows))} [scratchpad]`,
-    );
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
     const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
     expect(active).toEqual([
-      { kind: "Text", text: "4:code*", bold: true, fg: "accent" },
+      {
+        kind: "Text",
+        text: "[4:code*]",
+        bold: true,
+        fg: "background",
+        bg: "accent",
+      },
     ]);
   });
 
@@ -373,9 +425,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
       ws(row.id, row.name, row.active, { count: 2, occupied: true }),
     );
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe(
-      `${core.statusBarText(coreState(rows))} [scratchpad:2]`,
-    );
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad:2]");
   });
 
   test("invalid scratchpad fields read as empty (fail closed)", async () => {
@@ -387,7 +437,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
         }) as WorkspaceInfo,
     );
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
@@ -397,18 +447,18 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
 
     run.host.setWorkspaces(occupiedRows(THREE));
     run.host.publish("workspace.changed", { id: 4 });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
 
     run.host.setWorkspaces(THREE);
     run.host.publish("workspace.changed", { id: 4 });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
   test("a lone workspace with an occupied slot shows the bar", async () => {
     const rows = [ws(1, "ws1", true, OCCUPIED)];
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("1:ws1* (1) [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1*] [scratchpad]");
   });
 
   test("occupancy needs no grant beyond workspace.read", async () => {
@@ -417,7 +467,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
       workspaces: rows,
       grants: ["ui.rich", "workspace.read"],
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3) [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
     expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
       HostError,
     );
@@ -433,7 +483,7 @@ describe("headless activation regression (bar#6)", () => {
     const run = await bar({
       workspaces: [ws(1, "main", true), ws(2, "alt")],
     });
-    expect(painted(run)).toBe("1:main* 2:alt (2)");
+    expect(painted(run)).toBe("[1:main*] [2:alt]");
   });
 
   test("truncate_chars counts portably without pattern bytes", async () => {

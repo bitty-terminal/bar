@@ -65,6 +65,10 @@ M.LINE_MAX_BYTES = 1024 -- WORKSPACELINE_MAX_CHARS (UTF-8 bytes, char-boundary c
 M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
 
 M.ACTIVE_MARK = "*"
+M.OCCUPIED_MARK = "+"
+M.ATTENTION_MARK = "!"
+M.PILL_OPEN = "["
+M.PILL_CLOSE = "]"
 M.SEPARATOR = " "
 -- Fail-closed placeholder for an empty workspace list (U+2014 EM DASH).
 M.EMPTY_PLACEHOLDER = "\226\128\148"
@@ -475,9 +479,9 @@ function M.visible(rows, opts)
   return M.scratchpad_state(rows).occupied
 end
 
--- Ordered bar segments before the byte bound: one pill per workspace
--- (`{stable-id}:{name}` plus `*` on the active one), single-space separators,
--- the ` ({count})` suffix, and the scratchpad indicator when the slot is
+-- Ordered bar segments before the byte bound: one capsule per workspace
+-- (`[stable-id:name]` plus state marks) and single-space separators. The
+-- scratchpad indicator remains available after the capsule list when the slot is
 -- occupied. The id is the stable workspace seq from
 -- `bitty.workspace.list()` (Core `workspaceline_tokens` renders `slot.seq`),
 -- so closing a workspace never renumbers the survivors. Without an occupied
@@ -487,22 +491,52 @@ function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
   end
+  local ordered = {}
+  for index, row in ipairs(rows) do
+    ordered[index] = row
+  end
+  for index = 2, #ordered do
+    local row = ordered[index]
+    local cursor = index - 1
+    while cursor >= 1 and ordered[cursor].id > row.id do
+      ordered[cursor + 1] = ordered[cursor]
+      cursor = cursor - 1
+    end
+    ordered[cursor + 1] = row
+  end
   local out = {}
-  local count = math.min(#rows, M.MAX_WORKSPACES)
+  local count = math.min(#ordered, M.MAX_WORKSPACES)
   for index = 1, count do
-    local row = rows[index]
+    local row = ordered[index]
     if index > 1 then
       out[#out + 1] = { kind = "separator", text = M.SEPARATOR }
     end
-    local mark = row.active and M.ACTIVE_MARK or ""
+    local marks = ""
+    if row.active == true then
+      marks = marks .. M.ACTIVE_MARK
+    end
+    if type(row.panel_count) == "number" and row.panel_count > 0 then
+      marks = marks .. M.OCCUPIED_MARK
+    end
+    local attention = row.attention
+    if attention ~= nil and
+        (attention.bell == true or attention.activity == true or attention.exited == true) then
+      marks = marks .. M.ATTENTION_MARK
+    end
+    local label = tostring(row.id) .. ":" .. M.truncate_chars(row.name, opts.name_max_chars)
+    if marks ~= "" then
+      label = label .. marks
+    end
     out[#out + 1] = {
       kind = "pill",
-      text = row.id .. ":" .. M.truncate_chars(row.name, opts.name_max_chars) .. mark,
+      text = M.PILL_OPEN .. label .. M.PILL_CLOSE,
       id = row.id,
       active = row.active == true,
+      occupied = type(row.panel_count) == "number" and row.panel_count > 0,
+      attention = attention ~= nil and
+        (attention.bell == true or attention.activity == true or attention.exited == true),
     }
   end
-  out[#out + 1] = { kind = "suffix", text = " (" .. count .. ")" }
   local scratchpad = M.scratchpad_segment(rows)
   if scratchpad ~= nil then
     out[#out + 1] = scratchpad
@@ -512,18 +546,26 @@ end
 
 -- Converts one workspaces segment to a chassis atom. Atom shape:
 -- `{ text, bold?, fg?, on_click?, tooltip? }`. Only inactive pills are
--- clickable: separators, the count suffix, the active pill, the empty
+-- clickable: separators, the active capsule, the empty
 -- placeholder, and the scratchpad indicator switch nothing (Core
 -- `workspaceline_hit_test` / `workspaceline_click`).
 local function segment_atom(segment)
-  local atom = { text = segment.text }
+  local atom = { text = segment.text, whole = true }
   if segment.kind == "pill" then
     if segment.active then
       atom.bold = true
-      atom.fg = M.ACTIVE_FG
-    else
+      atom.fg = "background"
+      atom.bg = "accent"
+    elseif segment.attention then
+      atom.fg = "cursor"
+    elseif segment.occupied then
+      atom.bold = true
+    end
+    if not segment.active then
       atom.on_click = M.click_binding(M.FOCUS_COMMAND, { id = segment.id })
     end
+  elseif segment.kind == "separator" then
+    atom.separator = true
   end
   return atom
 end
@@ -2170,6 +2212,9 @@ function M.clip(atoms, max_bytes)
       break
     end
     local text = atom.text
+    if atom.whole and #text > remaining then
+      break
+    end
     if #text > remaining then
       text = M.truncate_bytes(text, remaining)
     end
@@ -2186,6 +2231,9 @@ function M.clip(atoms, max_bytes)
       break
     end
   end
+  if out[#out] ~= nil and (out[#out].separator or out[#out].module_gap) then
+    out[#out] = nil
+  end
   return out
 end
 
@@ -2199,6 +2247,9 @@ function M.atom_node(atom)
   end
   if atom.fg ~= nil then
     node.fg = atom.fg
+  end
+  if atom.bg ~= nil then
+    node.bg = atom.bg
   end
   if atom.on_click ~= nil then
     node.on_click = atom.on_click
@@ -2227,7 +2278,7 @@ function M.render_plan(opts, rows, now)
       })
       if type(rendered) == "table" and #rendered > 0 then
         if not first then
-          atoms[#atoms + 1] = { text = M.MODULE_GAP }
+          atoms[#atoms + 1] = { text = M.MODULE_GAP, module_gap = true }
         end
         for _, atom in ipairs(rendered) do
           atoms[#atoms + 1] = atom

@@ -317,7 +317,7 @@ describe("pulseaudio module render (broker stubs)", () => {
       workspaces: THREE,
       settings: { modules_left: ["pulseaudio", "workspaces"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("read-only render carries no click or scroll binding without the control head", async () => {
@@ -407,7 +407,7 @@ describe("spectrum cava-lite meter (broker stubs)", () => {
       workspaces: THREE,
       settings: { modules_left: ["spectrum", "workspaces"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("bucket counts above 32 fall back to the default", async () => {

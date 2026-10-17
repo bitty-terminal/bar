@@ -21,6 +21,8 @@ export interface CoreSlot {
   readonly seq: number;
 }
 
+/** Core reference remains useful for visibility and stable-id ordering only. */
+
 export interface CoreState {
   readonly workspaces: readonly CoreSlot[];
   /** 0-based active index. */

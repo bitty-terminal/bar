@@ -165,7 +165,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("42% 1:ws1 4:code* 9:logs (3)");
+    expect(painted(live)).toBe("42% [1:ws1] [4:code*] [9:logs]");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
@@ -173,7 +173,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       settings: { modules_left: ["cpu", "workspaces"] },
       grants: [...SENSOR_GRANTS],
     });
-    expect(painted(dark)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -195,14 +195,14 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("wifi 8.0K/4.0K 1:ws1 4:code* 9:logs (3)");
+    expect(painted(live)).toBe("wifi 8.0K/4.0K [1:ws1] [4:code*] [9:logs]");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(dark)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -219,7 +219,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -236,7 +236,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       workspaces: THREE,
       settings: { modules_left: ["pulseaudio", "workspaces"] },
     });
-    expect(painted(dark)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 });

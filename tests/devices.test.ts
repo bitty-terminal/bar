@@ -137,7 +137,7 @@ describe("network module (bitty#2012)", () => {
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -152,7 +152,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(badLink)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(badLink)).toBe("[1:ws1] [4:code*] [9:logs]");
 
     const failing = await bar({
       workspaces: THREE,
@@ -168,7 +168,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(failing)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(failing)).toBe("[1:ws1] [4:code*] [9:logs]");
     expect(failing.host.handlerViolations).toEqual([]);
   });
 
@@ -326,7 +326,7 @@ describe("bluetooth module (bitty#2017)", () => {
       workspaces: THREE,
       settings: { modules_left: ["bluetooth", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(ungranted)).toBe("[1:ws1] [4:code*] [9:logs]");
 
     const misshapen = await bar({
       workspaces: THREE,
@@ -338,7 +338,7 @@ describe("bluetooth module (bitty#2017)", () => {
         },
       },
     });
-    expect(painted(misshapen)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(misshapen)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 });
 
@@ -447,7 +447,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
         "backlight.state": { version: "1.0.0", impl: backlightState(500) },
       },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 });
 
@@ -536,7 +536,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
       workspaces: THREE,
       settings: { modules_left: ["idle", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(ungranted)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 });
 
@@ -561,11 +561,9 @@ describe("device option logic (pure, no settings gate)", () => {
   test("network_text honors a custom template with clean gaps", async () => {
     const data = { link: "wifi", down_bps: 8000, up_bps: 4000 };
     expect(
-      await mod["network_text"](
-        data,
-        undefined,
-        { format: "{link} down {down} up {up} {essid}" },
-      ),
+      await mod["network_text"](data, undefined, {
+        format: "{link} down {down} up {up} {essid}",
+      }),
     ).toBe("wifi down 8.0K up 4.0K");
     expect(
       await mod["network_text"](data, "Home", {
@@ -585,15 +583,13 @@ describe("device option logic (pure, no settings gate)", () => {
       }),
     ).toBe("on 1/2");
     expect(await mod["bluetooth_text"](data, {})).toBe("bt on (1/2)");
-    expect(
-      await mod["bluetooth_text"]({ powered: "yes" }, {}),
-    ).toBeNil();
+    expect(await mod["bluetooth_text"]({ powered: "yes" }, {})).toBeNil();
   });
 
   test("backlight_text honors a custom template; steps validate bounded", async () => {
-    expect(
-      await mod["backlight_text"]({ pct: 75 }, { format: "{pct}!" }),
-    ).toBe("75!");
+    expect(await mod["backlight_text"]({ pct: 75 }, { format: "{pct}!" })).toBe(
+      "75!",
+    );
     expect(await mod["backlight_text"]({ pct: 75 }, {})).toBe("75%");
     expect(await mod["valid_step"](10)).toBe(true);
     expect(await mod["valid_step"](-5)).toBe(true);
@@ -614,9 +610,7 @@ describe("device option logic (pure, no settings gate)", () => {
         { on_text: "YES", off_text: "NO" },
       ),
     ).toBe("YES");
-    expect(await mod["idle_text"]({ inhibited: true }, {})).toBe(
-      "inhibit:on",
-    );
+    expect(await mod["idle_text"]({ inhibited: true }, {})).toBe("inhibit:on");
     expect(await mod["idle_text"]({ inhibited: false }, {})).toBe(
       "inhibit:off",
     );
@@ -636,8 +630,8 @@ describe("device option logic (pure, no settings gate)", () => {
       tick_ms: 1,
     });
     expect(await mod["module_options"](get, "cpu")).toEqual({});
-    expect(
-      await mod["module_options"](() => undefined, "bluetooth"),
-    ).toEqual({});
+    expect(await mod["module_options"](() => undefined, "bluetooth")).toEqual(
+      {},
+    );
   });
 });

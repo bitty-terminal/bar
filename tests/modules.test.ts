@@ -53,7 +53,7 @@ const THREE: WorkspaceInfo[] = [
 describe("declarative module list", () => {
   test("the default plan renders the workspaces module (behavior preserving)", async () => {
     const run = await bar({ workspaces: THREE });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("modules_left order drives render order", async () => {
@@ -63,7 +63,9 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(painted(run)).toMatch(/^\d\d:\d\d 1:ws1 4:code\* 9:logs \(3\)$/);
+    expect(painted(run)).toMatch(
+      /^\d\d:\d\d \[1:ws1\] \[4:code\*\] \[9:logs\]$/,
+    );
   });
 
   test("reordering the settings reorders the render", async () => {
@@ -71,7 +73,9 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["workspaces", "clock"] },
     });
-    expect(painted(run)).toMatch(/^1:ws1 4:code\* 9:logs \(3\) \d\d:\d\d$/);
+    expect(painted(run)).toMatch(
+      /^\[1:ws1\] \[4:code\*\] \[9:logs\] \d\d:\d\d$/,
+    );
   });
 
   test("modules_right renders after the left group", async () => {
@@ -82,7 +86,9 @@ describe("declarative module list", () => {
         modules_right: ["clock"],
       },
     });
-    expect(painted(run)).toMatch(/^1:ws1 4:code\* 9:logs \(3\) \d\d:\d\d$/);
+    expect(painted(run)).toMatch(
+      /^\[1:ws1\] \[4:code\*\] \[9:logs\] \d\d:\d\d$/,
+    );
   });
 
   test("modules_center keeps its declared position (true centering is Phase C)", async () => {
@@ -93,7 +99,9 @@ describe("declarative module list", () => {
         modules_center: ["workspaces"],
       },
     });
-    expect(painted(run)).toMatch(/^\d\d:\d\d 1:ws1 4:code\* 9:logs \(3\)$/);
+    expect(painted(run)).toMatch(
+      /^\d\d:\d\d \[1:ws1\] \[4:code\*\] \[9:logs\]$/,
+    );
   });
 
   test("unknown module names are skipped", async () => {
@@ -101,7 +109,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["nope", "workspaces", "also-nope"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("a malformed spec never hides the bar (falls back to the default plan)", async () => {
@@ -109,7 +117,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: "clock" },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("a plan of only unknown names falls back to the default plan", async () => {
@@ -117,7 +125,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["rm -rf /"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
   });
 
   test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
@@ -130,7 +138,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: [42, "clock"] },
     });
-    expect(painted(run)).toBe("1:ws1 4:code* 9:logs (3)");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
 
     const factory = new LuaFactory();
     const lua = await factory.createEngine({ injectObjects: false });
