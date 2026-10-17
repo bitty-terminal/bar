@@ -3,30 +3,32 @@
 Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.
 
 [ADR-0014](https://github.com/bitty-terminal/bitty-docs/blob/main/docs/decisions/adrs/ADR-0014-workspace-core-presentation-plugins.md)
-keeps Workspace as a Core mechanism and moves every workspace presentation into
-plugins. This plugin's first module is a Waybar-like workspace bar over the
-Plugin API v1 surface.
+keeps Workspace as a Core mechanism and moves every workspace presentation
+into plugins. This plugin's first module is the workspace bar: it renders what
+the retired Core workspaceline drew, over the Plugin API v1 surface only.
 
-> Status: pre-implementation. Behavior is verified against the bitty-plugin-sdk
-> mock host (pinned by commit), not against a released host. Tabs and statusline
-> modules are not implemented yet.
+> Status: pre-implementation. Behavior is verified against the
+> bitty-plugin-sdk mock host (pinned by commit), not against a released host.
+> Tabs and statusline modules are not implemented yet.
 
 ## Workspace bar
 
 - One capsule per workspace, `[stable-id:name]`, joined by single spaces. The
-  active capsule carries `*`; occupied workspaces carry `+` when
-  `panel_count > 0`; and attention (`bell`, `activity`, or `exited`) carries
-  `!`. The active capsule also uses the host `accent` and `background` theme
-  tokens with bold text; occupied and attention capsules use restrained bold or
-  `cursor` emphasis. Each capsule remains one styled `Text` atom.
+  id is the stable workspace seq from `bitty.workspace.list()`, so closing a
+  workspace never renumbers the survivors. The active capsule carries `*`,
+  bold, `background` foreground, and the `accent` background theme tokens.
+  Occupied workspaces carry `+` when `panel_count > 0`; attention (`bell`,
+  `activity`, or `exited`) carries `!` with `cursor` emphasis. An empty
+  workspace list renders `—` (fail closed).
 - Names are cut to 32 characters (or `name_max_chars`); complete capsules are
   retained in stable numeric id order and the line is bounded to 1024 UTF-8
-  bytes. A capsule is one clickable `Text` node, so its complete hit area keeps
-  the existing click binding.
+  bytes. A capsule remains one styled `Text` atom, preserving its complete
+  click target.
 - A lone workspace hides the bar unless `show_single = true`.
 - Clicking an inactive capsule runs `bitty-terminal.bar:focus { id }`, which
   queues `bitty.workspace.focus(id)` by stable id. The active capsule,
-  separators, unknown or stale ids, and non-integer ids queue nothing.
+  separators, scratchpad indicator, unknown or stale ids, and non-integer ids
+  queue nothing.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
   event and re-reads settings on `config.reloaded`.
 
@@ -35,50 +37,256 @@ Plugin API v1 surface.
 Keys live under the plugin namespace (`plugins."bitty-terminal.bar"`); absent
 or invalid values fall back to the default.
 
-| Key              | Type    | Default    | Notes                                   |
-| ---------------- | ------- | ---------- | --------------------------------------- |
-| `show`           | boolean | `true`     | Live on `config.reloaded`.              |
-| `edge`           | string  | `"bottom"` | `"top"` or `"bottom"`; next generation. |
-| `show_single`    | boolean | `false`    | Live on `config.reloaded`.              |
-| `name_max_chars` | integer | `32`       | `1..32`; live on `config.reloaded`.     |
-
-Users customize these keys through the generic plugin TOML configuration at
-`$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.toml` (with the standard
-`~/.config` fallback), for example:
-
-```toml
-[plugins."bitty-terminal.bar"]
-edge = "top"
-show_single = true
-name_max_chars = 20
-```
-
-The plugin accepts only `top` and `bottom` today. Although Plugin API v1
-accepts `left` and `right` as storage slots, the current Core host does not
-paint vertical bands yet, so accepting those settings would produce an
-invisible bar. Vertical capsules remain a host follow-up.
+| Key              | Type    | Default          | Replaces (retired Core key) | Notes                                   |
+| ---------------- | ------- | ---------------- | --------------------------- | --------------------------------------- |
+| `show`           | boolean | `true`           | `workspace.show_bar`        | Live on `config.reloaded`.              |
+| `edge`           | string  | `"bottom"`       | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
+| `show_single`    | boolean | `false`          | none (Core always hid it)   | Live on `config.reloaded`.              |
+| `name_max_chars` | integer | `32`             | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+| `modules_left`   | array   | `["workspaces"]` | none                        | Ordered module names; live.             |
+| `modules_center` | array   | `[]`             | none                        | Rendered after left; live.              |
+| `modules_right`  | array   | `[]`             | none                        | Rendered after center; live.            |
 
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
 
+### Modules (declarative)
+
+Settings declare an ordered module list, modeled on Waybar's
+`modules-left/center/right`. Phase A renders the three groups left-to-right into
+one inset row: a true center/right alignment needs a Spacer/flex node that v1
+does not expose (Phase C), so the groups keep their declarative order.
+
+Each listed name resolves against the in-plugin module registry. A module
+renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip? }` from
+local data or a broker-provided interface and refreshes on its own cadence:
+
+- `workspaces` (event module): the capsule strip; refreshes from the
+  `workspace.*` events — no timer where events suffice.
+- `clock` (timer module): `os.date` with a per-module `format` (a restricted,
+  zero-grant local source); refreshes on `tick_ms`.
+- `cpu` (timer module, Phase B): aggregate CPU utilization from the broker
+  `system.cpu@1.0.0` provider (`bitty-terminal.sensors`); polls at the 2 s
+  provider ceiling.
+- `memory` (timer module, Phase B): memory and swap utilization from
+  `system.memory@1.0.0`; polls at the 2 s ceiling.
+- `battery` (timer module, Phase B): capacity and charge state from
+  `system.battery@1.0.0`; polls at the 5 s ceiling.
+- `pulseaudio` (timer module, Phase B provider module): volume, mute, and port
+  from the `audio.state@1.0.0` broker interface with icon selection Lua-side;
+  polls at the 2 s state ceiling. Click toggles mute and wheel steps the
+  volume through `audio.control@1.0.0` (bounded ±10 steps, 10 Hz coalesced
+  host-side). Read-only text when the control head is ungranted; hidden when
+  the state monitor is absent (fail closed).
+- `spectrum` (timer module, Phase B provider module): the cava-lite meter —
+  block glyphs (U+2581-U+2588) in a Text node at 4 fps from the
+  `audio.spectrum@1.0.0` broker interface (<=32 buckets). Falloff smoothing
+  and peak-hold run in Lua; `paused = true` freezes the last row. Hidden until
+  a live spectrum source lands host-side (the `pactl` monitor exposes no level
+  taps by design, so the meter hides rather than fabricates; 60 fps cava stays
+  out of scope).
+
+A bad spec never hides the bar: an unknown module name, a non-name entry, a
+non-list group, or a plan that resolves to nothing falls back to the default
+plan (`modules_left = ["workspaces"]`).
+
+Clicks dispatch **registered commands only** — `on-click` shell strings are not a
+vehicle and can never reach the scene. `on_click` binds a command id; a module
+with detail text but no command binds `bitty-terminal.bar:detail`, which shows
+the text as a notification (the v1 tooltip→notify fallback via
+`bitty.notify.show`). Wheel steps bind `on_scroll` the same way: the host
+merges the declared args with the computed `delta` (signed lines, positive for
+wheel-up) and invokes `bitty-terminal.bar:audio-step`, which clamps the burst
+to one bounded volume step.
+
+Per-module options live in a settings collection named after the module.
+Each collection is declared in the manifest `[settings]` table (bitty#2010);
+under the v1 settings contract the collections have no table or dot-path
+form, so they are declared `string-array` with an empty default and read as
+module defaults until table settings land host- and SDK-side (CTX-1226). The
+option logic itself is unchanged and covered by the pure suites:
+
+| Module       | Option           | Type    | Default   | Notes                                                             |
+| ------------ | ---------------- | ------- | --------- | ----------------------------------------------------------------- |
+| `clock`      | `format`         | string  | `"%H:%M"` | `os.date` format.                                                 |
+| `clock`      | `tick_ms`        | integer | `60000`   | Timer cadence, clamped to the `200` ms floor.                     |
+| `clock`      | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
+| `pulseaudio` | `format`         | string  | none      | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
+| `pulseaudio` | `show_port`      | boolean | `true`    | Append the truncated port to the text.                            |
+| `pulseaudio` | `port_max_chars` | integer | `16`      | Port display width, `1..64`.                                      |
+| `pulseaudio` | `tick_ms`        | integer | `2000`    | State poll cadence, clamped to the `200` ms floor.                |
+| `pulseaudio` | `tooltip`        | string  | none      | Reserved for Phase C real tooltips (the port rides it today).     |
+| `spectrum`   | `buckets`        | integer | `8`       | Sample width, `1..32` (out-of-range falls back to `8`).           |
+| `spectrum`   | `tick_ms`        | integer | `250`     | Meter cadence (4 fps), clamped to the `200` ms floor.             |
+| `spectrum`   | `paused`         | boolean | `false`   | Freeze the last row without polling.                              |
+| `spectrum`   | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
+
+### Modules (Phase B devices)
+
+The first system modules consume broker `owner:iface@version` providers
+served by the native `bitty-terminal.devices` component (Core CTX-1197 /
+CTX-1201; bitty#2012 network, bitty#2017 bluetooth, bitty#2020 backlight +
+idle-inhibit). Each resolves its short interface with an exact `^1.0`
+requirement and `optional = true`: an ungranted or absent provider hides the
+module and leaves the rest of the plan untouched. Read vs control never share
+an interface, and every control call re-resolves its control interface, so a
+narrowed grant takes effect without restart.
+
+- `network` (timer, 3 s floor): link plus measured bandwidth
+  (`wifi 8.0K/4.0K`); unmeasured rates are omitted. The ESSID renders only
+  when the separately-granted `network.essid` sub-interface resolves
+  (`wifi 8.0K/4.0K (Home)`); otherwise the key is absent and the rest is
+  unaffected. Never clickable: no control wiring exists or is wanted here.
+  Options: `format` (`{link}`, `{down}`, `{up}`, `{essid}`), `tick_ms`
+  (clamped at or above 3 s), `tooltip`.
+- `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
+  (`bt on (1/2)`; alias/address rendering stays Lua-side). Read-only by
+  default: the bonded-device list rides the `detail` tooltip fallback. With
+  `toggle = true` and the `bluetooth.control` head granted, the click flips
+  power via `set_power` only; deny defaults to the read-only render.
+  Options: `format` (`{status}`, `{connected}`, `{total}`, `{powered}`),
+  `tick_ms` (at or above 5 s), `tooltip`, `toggle`.
+- `backlight` (timer, 5 s floor): brightness (`75%`). The click steps by
+  `step` percent points (default `10`) via `backlight.control`/`set_step`
+  only. An unpermitted attempt reports `E_NOT_PERMITTED` host-side and the
+  click degrades to a notification (DEC-0115: never retries, never escalates,
+  never setuid). Without the control head the module is read-only.
+  Options: `format` (`{pct}`), `tick_ms` (at or above 5 s), `tooltip`,
+  `step` (`-100..100`).
+- `idle` (timer, 5 s floor): inhibit state (`inhibit:on` / `inhibit:off`;
+  the activated/deactivated glyphs stay config-side via `on_text` /
+  `off_text`). The click flips inhibition via `idle.control`/`set` only when
+  that head is granted; a denied toggle degrades to a notification.
+  Options: `tick_ms` (at or above 5 s), `tooltip`, `on_text`, `off_text`.
+
+Manifest activation (CTX-1226, post-SDK#152): the device heads
+(`platform.network.read`, `platform.essid.read`,
+`platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
+`platform.idle.read/.control`) are requested in `[capabilities]` (read heads
+plus each control head for the toggle/step variants) alongside the matching
+`[services.required]` broker entries, so the modules render once the host
+grants them and hide fail closed otherwise. No Lua change was needed.
+
+### Modules (Phase B sensors)
+
+Sensor modules negotiate their provider (`bitty.services.get` with an
+explicit `{ version = "^1.0", optional = true }`, inside pcall), poll one
+sample per tick, and hide fail closed when the provider is absent, ungranted,
+stale past the horizon, revoked, or malformed — a hidden sensor never hides
+the bar. Thresholds and icon buckets evaluate Lua-side; the provider sends
+raw numbers and states only:
+
+| Module    | Option     | Type    | Default                | Notes                                                       |
+| --------- | ---------- | ------- | ---------------------- | ----------------------------------------------------------- |
+| `cpu`     | `format`   | string  | `"{total}%"`           | Template keys: `{total}`, `{total_pct}` (rounded integer).  |
+| `cpu`     | `warning`  | number  | `80`                   | At-or-above reads `warning`; needs `warning` < `critical`.  |
+| `cpu`     | `critical` | number  | `90`                   | At-or-above reads `critical`.                               |
+| `cpu`     | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `cpu`     | `tooltip`  | string  | none                   | Default detail: `CPU 42% (8 cores)`.                        |
+| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{pct}`, `{used}`, `{total}` (GiB), swap triple.      |
+| `memory`  | `warning`  | number  | `80`                   | Same hot direction as `cpu`.                                |
+| `memory`  | `critical` | number  | `90`                   | Same hot direction as `cpu`.                                |
+| `memory`  | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `memory`  | `tooltip`  | string  | none                   | Default: `Memory 5/8 GiB (63%)`, plus swap when reported.   |
+| `battery` | `format`   | string  | `"{icon} {capacity}%"` | Keys: `{icon}`, `{capacity}`, `{state}`.                    |
+| `battery` | `warning`  | number  | `30`                   | At-or-below (discharging only) reads `warning`.             |
+| `battery` | `critical` | number  | `15`                   | At-or-below (discharging only) reads `critical`.            |
+| `battery` | `tick_ms`  | integer | `5000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
+| `battery` | `tooltip`  | string  | none                   | Default: `Battery 63% discharging`, plus `W` and time left. |
+
+Battery icons are five ASCII buckets by capacity (`[    ]` through
+`[====]`) with a `+` mark while charging. Only a discharging battery alarms
+on low capacity; `full`, `charging`, `plugged`, and `unknown` render the
+icon with the default presentation. Bar visibility stays workspace-driven
+(a lone workspace still hides the bar unless `show_single` is set);
+sensor-only plans inherit that rule.
+
+**Activation (landed, CTX-1226).** The manifest declares `[services.required]`
+for `system.cpu`/`system.memory`/`system.battery` at `^1.0` (plus the device
+and audio provider interfaces at their Lua version requirements), the
+`platform.cpu-read`, `platform.memory-read`, and `platform.battery-read`
+heads, and `[settings]` entries for every key this plugin reads, so the
+modules render on a live host once granted and hide fail closed without
+grants (`tests/activation.test.ts` proves negotiate → grant → poll → render
+per family plus the ungranted-hides negative). One v1 limit remains: the
+per-module option collections have no table form in the settings contract,
+so option tables read as module defaults until table settings land (pure
+option logic is unchanged and covered by the pure suites).
+
+A JSON settings array/object crosses the bridge into Lua as an indexable value
+(not a plain table), so module lists and per-module options are read through that
+indexable surface.
+
+**Cadence (Phase A, bar#17).** `bitty.timers.create` is one-shot and creation
+is valid only during activation (ADR 0009 LUA-OQ-12). The chassis pre-arms a
+bounded chain of one-shot ticks per timer module at multiples of the module
+cadence (clamped to the rate-policy floor) while the window is open, sharing
+the host timer budget evenly (`M.chain_ticks`, at least two repeats per
+module); every tick re-polls providers and re-renders, so repeated advances
+repaint with fresh values and no handler violation is recorded. The first
+tick additionally re-arms one single tick optimistically, so the arm path
+needs no bar change when repeating timers land. Hidden bars arm nothing
+(pause-on-hidden); past the activation window (e.g. `config.reloaded`) the
+live chain is kept and only an immediate re-render is issued.
+
+### Scratchpad indicator
+
+The window scratchpad slot is window-global (at most one parked panel), so
+every row of one `bitty.workspace.list()` result carries the same
+`scratchpad_count` (`0`/`1`) and `scratchpad_occupied` snapshot (Core CTX-0954,
+bitty PR #1671). The bar reads that snapshot tolerantly (the highest valid
+count wins, any presence flag wins; absent or invalid fields read as empty)
+and appends ` [scratchpad]` after the capsule list while the slot is occupied.
+The count rides the state and is shown only when it exceeds the single-slot
+ceiling (` [scratchpad:N]`; never on current hosts, where presence alone
+carries the `0`/`1`). Without an occupied slot the capsule list has no
+scratchpad segment.
+
+- The indicator is presentation only: it is never clickable and queues no
+  request. Occupancy arrives under the existing `workspace.read` grant (the
+  same `workspace.list()` rows); no panel capability is requested or
+  consulted, and no new event family is needed: Core fires the existing
+  `workspace.changed` on a put/take flip, which the bar already re-renders
+  from.
+- An occupied slot forces the bar visible even with a lone workspace; an
+  empty slot keeps the Core hide-lone behavior. `show = false` still hides
+  everything.
+- Hosts without the CTX-0954 surface omit both fields, so the bar renders
+  without the indicator (fail closed).
+
 ### Capabilities
 
 `ui.rich` (mount and update the band), `workspace.read` (`list` and the
-`workspace.*` events), and `workspace.control` (`focus` for clicks). Without
-`workspace.control` the bar still renders and clicks fail closed.
+`workspace.*` events), `workspace.control` (`focus` for clicks), and
+`platform.notify` (the tooltip→notify `detail` fallback), plus the 14 Phase B
+heads: `platform.cpu-read`/`memory-read`/`battery-read` (sensor providers),
+`platform.network.read`/`essid.read`,
+`platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
+`platform.idle.read/.control` (device providers, read never implying
+control), and `audio.state.read`/`state.control`/`spectrum` (audio monitor).
+Without `workspace.control` the bar still renders and pill clicks fail closed;
+without `platform.notify` the detail fallback fails closed. Device-module
+control clicks (`bluetooth-toggle`, `backlight-step`, `idle-toggle`) each call
+exactly one control method on their own control interface and only while that
+interface resolves; a denied call degrades to a notification and never
+retries.
+
+The audio modules negotiate the `audio.state@1.0.0`, `audio.control@1.0.0`,
+and `audio.spectrum@1.0.0` broker interfaces optionally: without the
+`audio.state.read`, `audio.state.control`, and `audio.spectrum` heads the
+modules hide (fail closed). Those heads are declared in the manifest since
+the SDK#152 closed-set parity (CTX-1226); the matching `[services.required]`
+entries supply the host negotiation versions.
 
 ### Known host gaps
 
 Gaps in the current host, not in this plugin:
 
-- The Core host parses `on_click` into the mounted scene but does not yet route
-  band clicks to the bound command, so clicking does nothing on a live host. The
-  mock host is used to exercise the command path.
-- The current host has no capsule style atom; active, occupied, and attention
-  states use supported `Text` styling plus textual markers.
-- `left` and `right` mounts are accepted and stored by Core but are not painted
-  until vertical bands ship; the plugin intentionally rejects them and falls
-  back to `bottom`.
+- The Core host parses `on_click` into the mounted scene but does not yet
+  route band clicks to the bound command, so clicking does nothing on a live
+  host. The mock host is used to exercise the command path.
+- Band painting ignores `fg`, `bg`, and `bold`. The active capsule stays
+  identifiable through the `*` mark.
 - Plugin bands reserve no exclusive zone. They overlay the edge content row
   instead of reflowing the grid the way the Core band did.
 - An empty (hidden) band still takes a stacking index on its edge.
@@ -89,14 +297,17 @@ Gaps in the current host, not in this plugin:
 
 ## Layout
 
-| Path                          | Purpose                                                              |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `bitty-plugin.toml`           | Static manifest, compatibility, capabilities, and lazy triggers.     |
-| `lua/bar/init.lua`            | Entry point and pure capsule rendering helpers.                      |
-| `tests/harness.ts`            | Lua 5.4 VM and SDK mock-host bridge.                                 |
-| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline bounds.            |
-| `tests/bar.test.ts`           | Capsule states, bounds, clicks, edge settings, and capability gates. |
-| `justfile`                    | Quality gates with pinned tool versions.                             |
+| Path                          | Purpose                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `bitty-plugin.toml`           | Static manifest: identity, compatibility, capabilities, and lazy triggers.   |
+| `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`.   |
+| `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.         |
+| `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).          |
+| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                            |
+| `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
+| `tests/devices.test.ts`       | Phase B device module tests (network, bluetooth, backlight, idle).           |
+| `tests/audio.test.ts`         | Audio module tests (pulseaudio state/control, spectrum meter, rate bounds).  |
+| `justfile`                    | Quality gates with pinned tool versions.                                     |
 
 ## Development
 
@@ -106,12 +317,13 @@ just check     # manifest lint, Lua 5.1 grammar parse + control, bun tests
 ```
 
 `just manifest` runs the authoritative `bitty-plugin-lint` from
-[bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk).
-`just lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar)
-and `just lua-control` proves the parser rejects invalid input. `just test` runs
-the entry point against the SDK `MockHost`, which owns capability gates,
-registration, scene validation, command schemas, events, and the bounded
-workspace request queue.
+[bitty-plugin-sdk](https://github.com/bitty-terminal/bitty-plugin-sdk). `just
+lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar) and
+`just lua-control` proves the parser rejects invalid input. `just test` runs the
+entry point against the SDK `MockHost`, which owns capability gates, the
+activation registration window, scene-node validation, command argument
+schemas, event declarations, and the bounded workspace request queue; the
+parity tests compare every painted column with the Core reference model.
 
 ## Security
 

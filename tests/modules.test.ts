@@ -1,0 +1,559 @@
+/**
+ * Declarative module chassis (bitty-terminal/bitty-plugins#86, Phase A):
+ * an ordered module list in settings, per-module render cadence, and
+ * command-only click dispatch — zero new Core API.
+ */
+
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { LuaFactory, type LuaEngine } from "wasmoon";
+import { V1_SURFACE_FUNCTIONS } from "bitty-plugin-sdk";
+
+import {
+  activateBar,
+  type BarRun,
+  ENTRY_SOURCE,
+  leaves,
+  textOf,
+  ws,
+  type WorkspaceInfo,
+} from "./harness.js";
+
+const DETAIL_COMMAND = "bitty-terminal.bar:detail";
+
+const runs: BarRun[] = [];
+
+async function bar(...args: Parameters<typeof activateBar>): Promise<BarRun> {
+  const run = await activateBar(...args);
+  runs.push(run);
+  return run;
+}
+
+afterEach(() => {
+  for (const run of runs.splice(0)) run.close();
+});
+
+function painted(run: BarRun): string | undefined {
+  const text = textOf(run.component());
+  return text === "" ? undefined : text;
+}
+
+const THREE: WorkspaceInfo[] = [
+  ws(1, "ws1"),
+  ws(4, "code", true),
+  ws(9, "logs"),
+];
+
+describe("declarative module list", () => {
+  test("the default plan renders the workspaces module (behavior preserving)", async () => {
+    const run = await bar({ workspaces: THREE });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+  });
+
+  test("modules_left order drives render order", async () => {
+    // v1 settings carry no per-module option tables (see bitty-plugin.toml),
+    // so the clock renders its default `%H:%M` text; order still drives paint.
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock", "workspaces"] },
+    });
+    expect(painted(run)).toMatch(
+      /^\d\d:\d\d \[1:ws1\] \[4:code\*\] \[9:logs\]$/,
+    );
+  });
+
+  test("reordering the settings reorders the render", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["workspaces", "clock"] },
+    });
+    expect(painted(run)).toMatch(
+      /^\[1:ws1\] \[4:code\*\] \[9:logs\] \d\d:\d\d$/,
+    );
+  });
+
+  test("modules_right renders after the left group", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: {
+        modules_left: ["workspaces"],
+        modules_right: ["clock"],
+      },
+    });
+    expect(painted(run)).toMatch(
+      /^\[1:ws1\] \[4:code\*\] \[9:logs\] \d\d:\d\d$/,
+    );
+  });
+
+  test("modules_center keeps its declared position (true centering is Phase C)", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: {
+        modules_left: ["clock"],
+        modules_center: ["workspaces"],
+      },
+    });
+    expect(painted(run)).toMatch(
+      /^\d\d:\d\d \[1:ws1\] \[4:code\*\] \[9:logs\]$/,
+    );
+  });
+
+  test("unknown module names are skipped", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["nope", "workspaces", "also-nope"] },
+    });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+  });
+
+  test("a malformed spec never hides the bar (falls back to the default plan)", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: "clock" },
+    });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+  });
+
+  test("a plan of only unknown names falls back to the default plan", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["rm -rf /"] },
+    });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+  });
+
+  test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
+    // A non-string list item mismatches the declared string-array kind, so
+    // the whole key reads as its shipped default (v1 strict fail-to-default,
+    // mirroring the host): the bar falls back to the default plan instead of
+    // skipping one entry. Entry-level skipping itself stays covered purely
+    // below and lights up unchanged when table settings land.
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: [42, "clock"] },
+    });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as Record<
+        string,
+        (...args: unknown[]) => unknown
+      >;
+      expect(await mod["entry_module"](42)).toBeNil();
+      expect(await mod["entry_module"]("clock")).toBe("clock");
+      expect(await mod["entry_module"]({ module: "cpu" })).toBe("cpu");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("any module count still mounts exactly one band", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock", "workspaces"] },
+    });
+    expect(run.mounts.length).toBe(1);
+  });
+});
+
+describe("per-module cadence (timer modules)", () => {
+  test("a timer module re-renders once on its tick", async () => {
+    // Default clock cadence is 60000 ms; per-module tick_ms tables are inert
+    // under v1 settings (see bitty-plugin.toml), so the default arms here.
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock", "workspaces"] },
+    });
+    expect(run.updates()).toBe(0);
+
+    run.host.advanceTimers(60000);
+    expect(run.updates()).toBe(1);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("chained one-shots repaint on every cadence tick (bar#17)", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock"] },
+    });
+    run.host.advanceTimers(60000);
+    expect(run.updates()).toBe(1);
+    // Repeats are pre-armed as a bounded chain while the activation window
+    // is open (v1 closes post-activation creation, so there is no re-arm to
+    // fail): the next cadence tick repaints again with no violation.
+    run.host.advanceTimers(60000);
+    expect(run.updates()).toBe(2);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("tick_ms overrides clamp to the floors (pure cadence math)", async () => {
+    // Integration cadences above arm the module defaults (tick_ms tables are
+    // inert under v1 settings); the override/clamp math itself is pure and
+    // covered here so it lights up unchanged when table settings land.
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    const mod = (await lua.doString(ENTRY_SOURCE)) as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
+    try {
+      const tickMs = mod["tick_ms"] as (
+        def: unknown,
+        options: unknown,
+      ) => unknown;
+      // No override: the module default wins.
+      expect(await tickMs({ tick_ms: 60000 }, {})).toBe(60000);
+      // Overrides below the chassis floor clamp to 200 ms.
+      expect(await tickMs({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(200);
+      // Device modules name a stricter provider floor (3 s network).
+      expect(await tickMs({ tick_ms: 3000, tick_floor_ms: 3000 }, {})).toBe(
+        3000,
+      );
+      expect(
+        await tickMs({ tick_ms: 3000, tick_floor_ms: 3000 }, { tick_ms: 1 }),
+      ).toBe(3000);
+      // Overrides above the floor apply.
+      expect(await tickMs({ tick_ms: 2000 }, { tick_ms: 5000 })).toBe(5000);
+      // Event modules have no cadence.
+      expect(await tickMs({ kind: "event" }, {})).toBeNil();
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("a hidden bar pauses timer modules (pause-on-hidden)", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { show: false, modules_left: ["clock"] },
+    });
+    run.host.advanceTimers(60000);
+    expect(run.updates()).toBe(0);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("event modules create no timer (no timer where events suffice)", async () => {
+    const run = await bar({ workspaces: THREE });
+    run.host.advanceTimers(600000);
+    expect(run.updates()).toBe(0);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+});
+
+describe("tooltip→notify fallback", () => {
+  // Per-module tooltip tables are inert under v1 settings (see
+  // bitty-plugin.toml), so the fallback is proven through the cpu default
+  // detail text, which every sensor atom carries without any option.
+  const CPU_SNAP = {
+    total_pct: 42.4,
+    per_core: [50, 30],
+    stale_age_ms: 0,
+  };
+  const CPU_GRANTS = [
+    "ui.rich",
+    "workspace.read",
+    "workspace.control",
+    "platform.notify",
+    "platform.cpu-read",
+    "platform.memory-read",
+    "platform.battery-read",
+  ] as const;
+
+  test("a module tooltip binds the detail command and shows a notification", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["cpu"] },
+      grants: [...CPU_GRANTS],
+      services: { "system.cpu": { snapshot: CPU_SNAP } },
+    });
+    const node = leaves(run.component())[0]!;
+    expect(node.on_click).toEqual({
+      command: DETAIL_COMMAND,
+      args: { text: "CPU 42% (2 cores)" },
+    });
+    expect(
+      run.host.dispatchCommand(DETAIL_COMMAND, { text: "CPU 42% (2 cores)" }),
+    ).toBe(true);
+    expect(run.host.notifications).toEqual([
+      { title: "Unified Bar", body: "CPU 42% (2 cores)" },
+    ]);
+  });
+
+  test("without platform.notify the fallback fails closed", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["cpu"] },
+      grants: ["ui.rich", "workspace.read", "workspace.control"],
+      services: { "system.cpu": { snapshot: CPU_SNAP } },
+    });
+    expect(
+      run.host.dispatchCommand(DETAIL_COMMAND, { text: "CPU 42% (2 cores)" }),
+    ).toBe(false);
+    expect(run.host.notifications).toEqual([]);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("a module without a tooltip is not clickable", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock"] },
+    });
+    expect(leaves(run.component())[0]!.on_click).toBeUndefined();
+  });
+});
+
+describe("no new Core API (grep the bridge surface)", () => {
+  // Runtime code with `--` comments removed, so only real calls are checked.
+  const code = ENTRY_SOURCE.split("\n")
+    .map((line) => {
+      const comment = line.indexOf("--");
+      return comment === -1 ? line : line.slice(0, comment);
+    })
+    .join("\n");
+  const calls = [
+    ...new Set(
+      [...code.matchAll(/bitty\.([a-z_]+)\.([a-z_]+)/g)].map(
+        (match) => `${match[1]}.${match[2]}`,
+      ),
+    ),
+  ].sort();
+
+  test("every bitty.<ns>.<fn> call is an accepted v1 surface function", () => {
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(V1_SURFACE_FUNCTIONS).toContain(call);
+    }
+  });
+
+  test("no process, exec, or load authority is used (clicks never shell out)", () => {
+    expect(code).not.toMatch(
+      /os\.execute|io\.popen|io\.open|process\.spawn|loadstring|os\.remove|os\.tmpname/,
+    );
+  });
+});
+
+describe("pure chassis helpers", () => {
+  const factory = new LuaFactory();
+  let lua: LuaEngine;
+  let mod: Record<string, (...args: unknown[]) => unknown>;
+
+  beforeAll(async () => {
+    lua = await factory.createEngine({ injectObjects: false });
+    mod = (await lua.doString(ENTRY_SOURCE)) as typeof mod;
+  });
+
+  afterAll(() => {
+    lua.global.close();
+  });
+
+  test("render_template substitutes {key} and keeps unknown keys", () => {
+    expect(mod["render_template"]("{a}%", { a: 42 })).toBe("42%");
+    expect(mod["render_template"]("cpu {pct}%", { pct: 7 })).toBe("cpu 7%");
+    expect(mod["render_template"]("hi {missing}", {})).toBe("hi {missing}");
+    expect(mod["render_template"]("plain", {})).toBe("plain");
+    expect(mod["render_template"](7, {})).toBe("");
+    expect(mod["render_template"]("abcdef", {}, 3)).toBe("abc");
+  });
+
+  test("state_token maps a module state to a theme token", () => {
+    expect(mod["state_token"]("warning")).toBe("warning");
+    expect(mod["state_token"]("critical")).toBe("critical");
+    expect(mod["state_token"]("normal")).toBe("normal");
+    expect(mod["state_token"]("bogus") ?? null).toBeNull();
+    expect(mod["state_token"]() ?? null).toBeNull();
+  });
+
+  test("click_binding accepts a command id only", () => {
+    const binding = mod["click_binding"]("p:go", { id: 1 }) as {
+      command: string;
+      args: { id: number };
+    };
+    expect(binding.command).toBe("p:go");
+    expect(binding.args.id).toBe(1);
+    expect(mod["click_binding"]("p:go")).toEqual({ command: "p:go" });
+    expect(mod["click_binding"](5) ?? null).toBeNull();
+    expect(mod["click_binding"]("") ?? null).toBeNull();
+  });
+
+  test("tooltip_payload builds a bounded notification or nil", () => {
+    expect(mod["tooltip_payload"]("detail")).toEqual({
+      title: "Unified Bar",
+      body: "detail",
+    });
+    expect(mod["tooltip_payload"]("") ?? null).toBeNull();
+    expect(mod["tooltip_payload"](5) ?? null).toBeNull();
+  });
+
+  test("clock_text reads os.date and fails closed", () => {
+    expect(mod["clock_text"]("literal", 0)).toBe("literal");
+    expect(String(mod["clock_text"]("%M", 0))).toMatch(/^\d\d$/);
+    expect(mod["clock_text"]("", 0)).toBe("");
+    expect(mod["clock_text"]("%H:%M")).toBe("");
+    expect(mod["clock_text"]("%H:%M", "no")).toBe("");
+  });
+
+  test("tick_ms is nil for event modules and floor-clamped for timer modules", () => {
+    expect(mod["tick_ms"]({ tick_ms: 60000 }, {})).toBe(60000);
+    expect(mod["tick_ms"]({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(200);
+    expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 100 })).toBe(200);
+    expect(mod["tick_ms"]({ tick_ms: 5000 }, { tick_ms: 200 })).toBe(200);
+    expect(mod["tick_ms"]({}) ?? null).toBeNull();
+  });
+
+  test("chain_ticks shares the timer cap across the plan (bar#17)", () => {
+    expect(mod["chain_ticks"](0)).toBe(0);
+    expect(mod["chain_ticks"](-1)).toBe(0);
+    expect(mod["chain_ticks"](1)).toBe(32);
+    expect(mod["chain_ticks"](2)).toBe(16);
+    expect(mod["chain_ticks"](10)).toBe(3);
+    expect(mod["chain_ticks"](11)).toBe(2);
+    // Even the largest plan repeats at least twice (the repeat proof
+    // advances twice); excess past the host cap degrades to fewer repeats.
+    expect(mod["chain_ticks"](100)).toBe(2);
+  });
+
+  test("clock_text changes across a minute rollover", () => {
+    const clockText = mod["clock_text"] as (
+      format: string,
+      now: number,
+    ) => string;
+    // Ten seconds before a minute boundary in any timezone: +20 s crosses it.
+    const base = 1790000000;
+    const before = base - (base % 60) + 50;
+    const after = before + 20;
+    const first = clockText("%H:%M", before);
+    const second = clockText("%H:%M", after);
+    expect(first).toMatch(/^\d\d:\d\d$/);
+    expect(second).toMatch(/^\d\d:\d\d$/);
+    expect(second).not.toBe(first);
+  });
+
+  test("entry_module accepts a name string or a table entry", () => {
+    expect(mod["entry_module"]("clock")).toBe("clock");
+    expect(mod["entry_module"]({ module: "clock" })).toBe("clock");
+    expect(mod["entry_module"]({ name: "clock" })).toBe("clock");
+    expect(mod["entry_module"](5) ?? null).toBeNull();
+    expect(mod["entry_module"]("") ?? null).toBeNull();
+  });
+
+  test("read_plan resolves group order and falls back to the default", () => {
+    const cfg: Record<string, unknown> = {
+      modules_left: ["clock", "workspaces"],
+    };
+    const get = (key: string): unknown => cfg[key];
+    const plan = mod["read_plan"](get) as Array<{ name: string }>;
+    expect(plan.map((spec) => spec.name)).toEqual(["clock", "workspaces"]);
+
+    delete cfg["modules_left"];
+    const fallback = mod["read_plan"](get) as Array<{ name: string }>;
+    expect(fallback.map((spec) => spec.name)).toEqual(["workspaces"]);
+  });
+
+  test("the module registry exposes workspaces, clock, and the Phase B device, sensor, and audio modules", () => {
+    const modules = mod["MODULES"] as Record<string, { name: string }>;
+    expect(Object.keys(modules).sort()).toEqual([
+      "backlight",
+      "battery",
+      "bluetooth",
+      "clock",
+      "cpu",
+      "idle",
+      "memory",
+      "network",
+      "pulseaudio",
+      "spectrum",
+      "workspaces",
+    ]);
+    expect(modules["workspaces"]!.name).toBe("workspaces");
+    expect(modules["clock"]!.name).toBe("clock");
+    expect(modules["network"]!.name).toBe("network");
+    expect(modules["bluetooth"]!.name).toBe("bluetooth");
+    expect(modules["backlight"]!.name).toBe("backlight");
+    expect(modules["idle"]!.name).toBe("idle");
+    expect(modules["cpu"]!.name).toBe("cpu");
+    expect(modules["memory"]!.name).toBe("memory");
+    expect(modules["battery"]!.name).toBe("battery");
+    expect(modules["pulseaudio"]!.name).toBe("pulseaudio");
+    expect(modules["spectrum"]!.name).toBe("spectrum");
+  });
+
+  test("tick floors keep device modules at their contract cadence", () => {
+    const modules = mod["MODULES"] as Record<string, { tick_ms: number }>;
+    expect(modules["network"]!.tick_ms).toBe(3000);
+    expect(modules["bluetooth"]!.tick_ms).toBe(5000);
+    expect(modules["backlight"]!.tick_ms).toBe(5000);
+    expect(modules["idle"]!.tick_ms).toBe(5000);
+    expect(
+      mod["tick_ms"]({ tick_ms: 3000, tick_floor_ms: 3000 }, { tick_ms: 1 }),
+    ).toBe(3000);
+    expect(mod["tick_ms"]({ tick_ms: 5000, tick_floor_ms: 5000 }, {})).toBe(
+      5000,
+    );
+  });
+
+  test("format_bps humanizes rates and rejects bad measurements", () => {
+    expect(mod["format_bps"](0)).toBe("0B");
+    expect(mod["format_bps"](999)).toBe("999B");
+    expect(mod["format_bps"](8000)).toBe("8.0K");
+    expect(mod["format_bps"](1500000)).toBe("1.5M");
+    expect(mod["format_bps"]() ?? null).toBeNull();
+    expect(mod["format_bps"]("x") ?? null).toBeNull();
+    expect(mod["format_bps"](-1) ?? null).toBeNull();
+  });
+
+  test("network_text renders link, rates, and the granted ESSID only", () => {
+    const data = { link: "wifi", down_bps: 8000, up_bps: 4000 };
+    expect(mod["network_text"](data, "Home", {})).toBe("wifi 8.0K/4.0K (Home)");
+    expect(mod["network_text"](data, undefined, {})).toBe("wifi 8.0K/4.0K");
+    expect(mod["network_text"]({ link: "ethernet" }, undefined, {})).toBe(
+      "ethernet",
+    );
+    expect(
+      mod["network_text"]({ link: "satellite" }, undefined, {}) ?? null,
+    ).toBeNull();
+    expect(
+      mod["network_text"](data, undefined, { format: "{link} {down}/{up}" }),
+    ).toBe("wifi 8.0K/4.0K");
+  });
+
+  test("bluetooth_text and bluetooth_detail stay Lua-side", () => {
+    const data = {
+      powered: true,
+      connected_count: 1,
+      total_count: 2,
+      devices: [
+        { alias: "Headphones", address: "AA:BB:CC:DD:EE:01" },
+        { alias: "Keyboard", address: "AA:BB:CC:DD:EE:02" },
+      ],
+    };
+    expect(mod["bluetooth_text"](data, {})).toBe("bt on (1/2)");
+    expect(mod["bluetooth_text"]({ powered: false }, {})).toBe("bt off");
+    expect(mod["bluetooth_text"]({ powered: "yes" }, {}) ?? null).toBeNull();
+    expect(mod["bluetooth_detail"](data)).toBe(
+      "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
+    );
+    expect(mod["bluetooth_detail"]({ devices: {} }) ?? null).toBeNull();
+  });
+
+  test("backlight_text, idle_text, valid_step, and compact", () => {
+    expect(mod["backlight_text"]({ pct: 75 }, {})).toBe("75%");
+    expect(mod["backlight_text"]({ pct: 500 }, {}) ?? null).toBeNull();
+    expect(mod["backlight_text"]({ pct: "x" }, {}) ?? null).toBeNull();
+    expect(mod["idle_text"]({ inhibited: true }, {})).toBe("inhibit:on");
+    expect(mod["idle_text"]({ inhibited: false }, { off_text: "NO" })).toBe(
+      "NO",
+    );
+    expect(mod["idle_text"]({}, {}) ?? null).toBeNull();
+    expect(mod["valid_step"](10)).toBe(true);
+    expect(mod["valid_step"](1.5)).toBe(false);
+    expect(mod["valid_step"](101)).toBe(false);
+    expect(mod["compact"]("a  b   c ")).toBe("a b c");
+  });
+});

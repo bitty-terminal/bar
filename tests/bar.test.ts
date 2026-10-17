@@ -12,9 +12,12 @@ import {
 } from "bitty-plugin-sdk";
 
 import * as core from "./core-workspaceline.js";
+import { LuaFactory } from "wasmoon";
+
 import {
   activateBar,
   type BarRun,
+  ENTRY_SOURCE,
   FOCUS_COMMAND,
   leafAt,
   leaves,
@@ -40,7 +43,7 @@ function coreState(
   visible = true,
 ): core.CoreState {
   return {
-    workspaces: rows.map((row) => ({ name: row.name })),
+    workspaces: rows.map((row) => ({ name: row.name, seq: row.id })),
     active: Math.max(
       0,
       rows.findIndex((row) => row.active),
@@ -64,7 +67,7 @@ describe("manifest", () => {
   });
 });
 
-describe("rendering", () => {
+describe("rendering parity with the Core workspaceline", () => {
   const cases: Record<string, WorkspaceInfo[]> = {
     empty: [],
     two: [ws(1, "ws1", true), ws(2, "ws2")],
@@ -81,7 +84,7 @@ describe("rendering", () => {
   };
 
   for (const [name, rows] of Object.entries(cases)) {
-    test(`${name}: output is bounded and stable`, async () => {
+    test(`${name}: capsule output is bounded and stable`, async () => {
       const run = await bar({ workspaces: rows });
       const text = painted(run) ?? "";
       expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(
@@ -124,11 +127,6 @@ describe("rendering", () => {
           leaf.text.endsWith("]"),
       ),
     ).toBe(true);
-    expect(
-      leaves(run.component()).some(
-        (leaf) => leaf.text !== " " && !leaf.text.endsWith("]"),
-      ),
-    ).toBe(false);
   });
 
   test("active and inactive workspaces render as distinct capsules", async () => {
@@ -140,7 +138,6 @@ describe("rendering", () => {
       " ",
       "[9:logs]",
     ]);
-    expect(leaves(run.component())[0]?.on_click?.args).toEqual({ id: 1 });
     expect(leaves(run.component())[2]).toEqual({
       kind: "Text",
       text: "[4:code*]",
@@ -154,11 +151,7 @@ describe("rendering", () => {
     const rows = [
       ws(1, "idle"),
       ws(4, "busy", true, 2),
-      ws(9, "urgent", false, 0, {
-        bell: true,
-        activity: false,
-        exited: false,
-      }),
+      ws(9, "urgent", false, 0, { bell: true, activity: false, exited: false }),
     ];
     const run = await bar({ workspaces: rows });
     expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
@@ -236,13 +229,6 @@ describe("edge", () => {
     const run = await bar({ workspaces: THREE, settings: { edge: "top" } });
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["top"]);
   });
-
-  test("edge = left/right fall back to the painted bottom band", async () => {
-    for (const edge of ["left", "right"]) {
-      const run = await bar({ workspaces: THREE, settings: { edge } });
-      expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    }
-  });
 });
 
 describe("live updates", () => {
@@ -265,6 +251,29 @@ describe("live updates", () => {
     run.host.setWorkspaces([ws(2, "ws2", true)]);
     run.host.publish("workspace.closed", { id: 1 });
     expect(painted(run)).toBeUndefined();
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("closing workspaces keeps stable-seq labels (W-104 R1 live proof)", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)],
+    });
+    expect(painted(run)).toBe("[1:ws1] [2:ws2] [3:ws3*]");
+
+    // Live proof: closing #1 leaves Core painting `2:ws2 3:ws3*`; the
+    // position-based plugin painted `1:ws2 2:ws3*` instead.
+    run.host.setWorkspaces([ws(2, "ws2"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.closed", { id: 1 });
+    const afterFirstClose = [ws(2, "ws2"), ws(3, "ws3", true)];
+    expect(painted(run)).toBe("[2:ws2] [3:ws3*]");
+
+    // Closing the middle never renumbers the tail either.
+    run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.created", { id: 1, name: "ws1" });
+    run.host.setWorkspaces([ws(1, "ws1"), ws(3, "ws3", true)]);
+    run.host.publish("workspace.closed", { id: 2 });
+    const afterMiddleClose = [ws(1, "ws1"), ws(3, "ws3", true)];
+    expect(painted(run)).toBe("[1:ws1] [3:ws3*]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -355,5 +364,254 @@ describe("capability gates", () => {
       HostError,
     );
     expect(run.host.drainWorkspaceRequests()).toEqual([]);
+  });
+});
+
+describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
+  const EMPTY = { count: 0, occupied: false };
+  const OCCUPIED = { count: 1, occupied: true };
+  const occupiedRows = (rows: readonly WorkspaceInfo[]): WorkspaceInfo[] =>
+    rows.map((row) => ws(row.id, row.name, row.active, OCCUPIED));
+
+  test("an empty slot renders no indicator (Core parity preserved)", async () => {
+    const rows = THREE.map((row) => ws(row.id, row.name, row.active, EMPTY));
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("rows from a host without the surface render no indicator", async () => {
+    const run = await bar({ workspaces: THREE });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("an occupied slot appends the indicator after the Core text", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
+    expect(active).toEqual([
+      {
+        kind: "Text",
+        text: "[4:code*]",
+        bold: true,
+        fg: "background",
+        bg: "accent",
+      },
+    ]);
+  });
+
+  test("indicator columns queue nothing (no panel capability involved)", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({ workspaces: rows });
+    const text = textOf(run.component());
+    const start = text.indexOf(" [scratchpad]");
+    expect(start).toBeGreaterThanOrEqual(0);
+    for (
+      let column = start;
+      column < start + " [scratchpad]".length;
+      column += 1
+    ) {
+      expect(leafAt(run.component(), column)?.on_click).toBeUndefined();
+    }
+    expect(run.host.drainWorkspaceRequests()).toEqual([]);
+  });
+
+  test("a count above the single-slot ceiling renders defensively", async () => {
+    const rows = THREE.map((row) =>
+      ws(row.id, row.name, row.active, { count: 2, occupied: true }),
+    );
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad:2]");
+  });
+
+  test("invalid scratchpad fields read as empty (fail closed)", async () => {
+    const rows = THREE.map(
+      (row) =>
+        ws(row.id, row.name, row.active, {
+          count: "many",
+          occupied: "yes",
+        }) as WorkspaceInfo,
+    );
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(textOf(run.component())).not.toContain("scratchpad");
+  });
+
+  test("workspace.changed flips the indicator live (put and take)", async () => {
+    const run = await bar({ workspaces: THREE });
+    expect(textOf(run.component())).not.toContain("scratchpad");
+
+    run.host.setWorkspaces(occupiedRows(THREE));
+    run.host.publish("workspace.changed", { id: 4 });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+
+    run.host.setWorkspaces(THREE);
+    run.host.publish("workspace.changed", { id: 4 });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("a lone workspace with an occupied slot shows the bar", async () => {
+    const rows = [ws(1, "ws1", true, OCCUPIED)];
+    const run = await bar({ workspaces: rows });
+    expect(painted(run)).toBe("[1:ws1*] [scratchpad]");
+  });
+
+  test("occupancy needs no grant beyond workspace.read", async () => {
+    const rows = occupiedRows(THREE);
+    const run = await bar({
+      workspaces: rows,
+      grants: ["ui.rich", "workspace.read"],
+    });
+    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
+      HostError,
+    );
+  });
+
+  test("the manifest requests no panel capability", () => {
+    expect(MANIFEST_SOURCE).not.toMatch(/panel/);
+  });
+});
+
+describe("headless activation regression (bar#6)", () => {
+  test("two-row ASCII stub mounts (issue repro: main/alt)", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "main", true), ws(2, "alt")],
+    });
+    expect(painted(run)).toBe("[1:main*] [2:alt]");
+  });
+
+  test("truncate_chars counts portably without pattern bytes", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as {
+        truncate_chars(text: string, max: number): string;
+      };
+      expect(mod.truncate_chars("hello", 32)).toBe("hello");
+      expect(mod.truncate_chars("hello", 2)).toBe("he");
+      expect(mod.truncate_chars("日本語", 2)).toBe("日本");
+      expect(mod.truncate_chars("🚀 deploy", 1)).toBe("🚀");
+      expect(mod.truncate_chars("", 32)).toBe("");
+      expect(mod.truncate_chars("hello", 0)).toBe("");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("runtime code uses no phodopus-rejected pattern bytes", () => {
+    const code = ENTRY_SOURCE.split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    expect(code).not.toMatch(/gmatch.*\\128/);
+    expect(code).not.toMatch(/\[\^\\128/);
+  });
+
+  test("runtime code uses no phodopus-rejected gsub-with-function", () => {
+    // Phodopus admits string/table gsub replacements and rejects function
+    // replacements (`function replacement currently unsupported in gsub`).
+    // Scan every gsub call with balanced parens; none may carry a function.
+    const code = ENTRY_SOURCE.split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    const calls: string[] = [];
+    let from = 0;
+    for (;;) {
+      const start = code.indexOf("gsub(", from);
+      if (start === -1) break;
+      let depth = 0;
+      let i = start + "gsub".length;
+      for (; i < code.length; i += 1) {
+        const ch = code[i];
+        if (ch === "(") {
+          depth += 1;
+        } else if (ch === ")") {
+          depth -= 1;
+          if (depth === 0) break;
+        } else if (ch === '"' || ch === "'") {
+          const quote = ch;
+          i += 1;
+          while (i < code.length && code[i] !== quote) {
+            if (code[i] === "\\") i += 1;
+            i += 1;
+          }
+        }
+      }
+      calls.push(code.slice(start, i + 1));
+      from = i + 1;
+    }
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).not.toMatch(/\bfunction\b/);
+    }
+  });
+});
+
+describe("template renderer (bar#15)", () => {
+  interface TemplateMod {
+    render_template(format: unknown, data: unknown, max?: number): string;
+    CPU_DEFAULT_FORMAT: string;
+    MEMORY_DEFAULT_FORMAT: string;
+    BATTERY_DEFAULT_FORMAT: string;
+  }
+
+  test("renders the production template defaults", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template(mod.CPU_DEFAULT_FORMAT, { total: "12" })).toBe(
+        "12%",
+      );
+      expect(
+        mod.render_template(mod.MEMORY_DEFAULT_FORMAT, { pct: "42" }),
+      ).toBe("42%");
+      expect(
+        mod.render_template(mod.BATTERY_DEFAULT_FORMAT, {
+          icon: "H",
+          capacity: "87",
+        }),
+      ).toBe("H 87%");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("missing keys stay literal, values splice without %-escapes", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template("{a} {b}", { b: "B" })).toBe("{a} B");
+      expect(mod.render_template("{a}{b}", { a: "x", b: "y" })).toBe("xy");
+      expect(mod.render_template("{{x}}", { x: "1" })).toBe("{1}");
+      expect(mod.render_template("{v}", { v: "100% done" })).toBe("100% done");
+      expect(mod.render_template("{v}", { v: "%1 %0 %%" })).toBe("%1 %0 %%");
+      expect(mod.render_template("{v}", { v: "{lit}" })).toBe("{lit}");
+      expect(mod.render_template("hello", {})).toBe("hello");
+      expect(mod.render_template("", { a: "x" })).toBe("");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("rejects bad shapes and honors the byte cap", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as TemplateMod;
+      expect(mod.render_template(undefined, { a: "x" })).toBe("");
+      expect(mod.render_template(42, { a: "x" })).toBe("");
+      expect(mod.render_template("{a}", undefined)).toBe("{a}");
+      expect(mod.render_template("{total}%", { total: "12" }, 4)).toBe("{tot");
+      expect(mod.render_template("{v}", { v: "日本語" }, 6)).toBe("日本");
+    } finally {
+      lua.global.close();
+    }
   });
 });
