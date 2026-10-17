@@ -20,21 +20,8 @@ license = "MIT"
 # resolved by the host at install time. The host validates compatibility
 # before activation and fails closed (disable with a diagnostic, no partial
 # activation) on mismatch.
-# bar#13 (P0): the `>=0.5` floor was a verbatim template default ("Adjust to
-# the host release you target"), never a real requirement — no 0.5-only API
-# is used. Every surface the Lua touches is present on the 0.0.x host line:
-# `bitty.workspace.list/focus` + `workspace.*` events (ADR-0014),
-# `bitty.settings.get` (declared keys under `[settings]`, bitty#2010),
-# `bitty.ui.mount/update`, `bitty.commands.register`,
-# `bitty.events.subscribe`, `bitty.timers`, `bitty.notify.show`, and the
-# optional `bitty.services.get` negotiation (Phase B providers resolve to nil
-# and their modules hide fail-closed when the namespace, provider, or grant
-# is absent, so older hosts degrade instead of aborting). The floor therefore
-# matches composer (`>=0.0.21,<0.1`, verified against the 0.0.x host line and
-# admitting 0.0.22), and the ceiling stays restrictive (<0.1) because 0.x
-# minors may break. Verified: headless `bitty plugin install --yes` on host
-# 0.0.22 (bitty@1982750e) succeeds; the previous floor rejected it with
-# EXIT=4. Revisit on API bumps.
+# The declared compatibility floor for the 0.0.24 release train is
+# `>=0.0.24,<0.1`.
 bitty = ">=0.0.24,<0.1"
 plugin-api = "^1.0"
 
