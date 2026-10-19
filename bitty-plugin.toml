@@ -96,7 +96,8 @@ audio.spectrum = true
 # so every key below must be declared or activation aborts).
 # - Chassis scalars (`show`, `edge`, `show_single`, `name_max_chars`, `label`)
 #   mirror `M.DEFAULTS`; the module-group lists (`modules_left/_center/_right`)
-#   mirror `M.MODULE_GROUPS` (absent groups fall back to the default plan).
+#   mirror `M.DEFAULT_MODULE_PLAN` (absent groups fall back to the default
+#   plan: workspaces left, clock center, empty right).
 #   `label` is a bounded string enum (`index` | `name` | `both`); v1 settings
 #   have no enum kind, so the shipped default plus the local closed-set check
 #   in `M.read_settings` own the fallback (an unknown value paints `index`
@@ -119,7 +120,7 @@ show_single = { type = "bool", default = false }
 name_max_chars = { type = "int", default = 32 }
 label = { type = "string", default = "index" }
 modules_left = { type = "string-array", default = ["workspaces"] }
-modules_center = { type = "string-array", default = [] }
+modules_center = { type = "string-array", default = ["clock"] }
 modules_right = { type = "string-array", default = [] }
 workspaces = { type = "string-array", default = [] }
 clock = { type = "string-array", default = [] }

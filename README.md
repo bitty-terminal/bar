@@ -49,7 +49,7 @@ or invalid values fall back to the default.
 | `name_max_chars` | integer | `32`             | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
 | `label`          | string  | `"index"`        | none                        | `"index"`, `"name"`, or `"both"`; live. |
 | `modules_left`   | array   | `["workspaces"]` | none                        | Ordered module names; live.             |
-| `modules_center` | array   | `[]`             | none                        | Rendered after left; live.              |
+| `modules_center` | array   | `["clock"]`      | none                        | Rendered after left; live.              |
 | `modules_right`  | array   | `[]`             | none                        | Rendered after center; live.            |
 
 An unknown or non-string `label` value falls back to `index` (the bar still
@@ -97,8 +97,10 @@ local data or a broker-provided interface and refreshes on its own cadence:
   out of scope).
 
 A bad spec never hides the bar: an unknown module name, a non-name entry, a
-non-list group, or a plan that resolves to nothing falls back to the default
-plan (`modules_left = ["workspaces"]`).
+non-list group, or a plan that resolves to nothing falls back to the shipped
+default plan (`modules_left = ["workspaces"]`, `modules_center = ["clock"]`,
+`modules_right = []`). A fresh install therefore paints the workspace capsules
+followed by the clock; set `modules_center = []` to remove the clock.
 
 Clicks dispatch **registered commands only** — `on-click` shell strings are not a
 vehicle and can never reach the scene. `on_click` binds a command id; a module

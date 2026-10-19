@@ -95,7 +95,14 @@ M.LABEL_DIAGNOSTIC_SUFFIX = "; using 'index'."
 -- center, then right into one inset row: a true center/right alignment needs a
 -- Spacer/flex node (Phase C), so the groups keep their declarative order.
 M.MODULE_GROUPS = { "modules_left", "modules_center", "modules_right" }
-M.DEFAULT_MODULES_LEFT = { "workspaces" }
+-- Shipped default plan (fresh install): workspace capsules on the left, the
+-- clock in the center group, and an empty right group. Mirrors the manifest
+-- `[settings]` defaults; a user opts out of any group by setting it to [].
+M.DEFAULT_MODULE_PLAN = {
+  modules_left = { "workspaces" },
+  modules_center = { "clock" },
+  modules_right = {},
+}
 -- Modules are joined by a single space when more than one renders.
 M.MODULE_GAP = " "
 
@@ -2182,8 +2189,9 @@ end
 
 -- Resolves the ordered module plan from the module-group settings. Order is
 -- left, then center, then right. If no group is set, or every entry is
--- unknown, the plan falls back to the default (`modules_left` = workspaces),
--- so a bad or empty spec never hides the bar.
+-- unknown, the plan falls back to the shipped default (`modules_left` =
+-- workspaces, `modules_center` = clock, `modules_right` = empty), so a bad
+-- or empty spec never hides the bar.
 function M.read_plan(get, opts)
   local specs = {}
   local groups = {}
@@ -2201,7 +2209,9 @@ function M.read_plan(get, opts)
     end
   end
   if #specs == 0 then
-    append_specs(get, M.DEFAULT_MODULES_LEFT, specs)
+    for _, key in ipairs(M.MODULE_GROUPS) do
+      append_specs(get, M.DEFAULT_MODULE_PLAN[key], specs)
+    end
   end
   if opts ~= nil then
     opts.specs = specs

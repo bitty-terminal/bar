@@ -32,8 +32,20 @@ import {
 
 const runs: BarRun[] = [];
 
-async function bar(...args: Parameters<typeof activateBar>): Promise<BarRun> {
-  const run = await activateBar(...args);
+/**
+ * These tests pin the workspace-only center (`modules_center: []`) so the
+ * device assertions stay focused on their module; the shipped default plan
+ * (workspaces left, clock center) is covered in modules.test.ts.
+ */
+const NO_CENTER = { modules_center: [] } as const;
+
+async function bar(
+  options: Parameters<typeof activateBar>[0] = {},
+): Promise<BarRun> {
+  const run = await activateBar({
+    ...options,
+    settings: { ...NO_CENTER, ...options.settings },
+  });
   runs.push(run);
   return run;
 }
