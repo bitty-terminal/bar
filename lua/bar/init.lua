@@ -78,6 +78,19 @@ M.ACTIVE_FG = "accent"
 -- Accepted bar edges and the band slot each one mounts into.
 M.EDGE_SLOTS = { top = "top", bottom = "bottom" }
 
+-- Workspace capsule label modes (`label` setting). `index` is the default: the
+-- stable workspace seq alone (`[1] [2*]`), the least noisy form. `name` shows
+-- the truncated workspace name, `both` keeps the historical `id:name` form.
+-- Active/occupied/attention marks ride after the label in every mode.
+M.LABELS = { index = true, name = true, both = true }
+M.LABEL_DEFAULT = "index"
+-- Bound for the invalid-value diagnostic (characters of the echoed value and
+-- the fixed sentence around it), so a hostile config cannot produce an
+-- unbounded notification body.
+M.LABEL_DIAGNOSTIC_MAX_CHARS = 32
+M.LABEL_DIAGNOSTIC_PREFIX = "Unified Bar: unknown label "
+M.LABEL_DIAGNOSTIC_SUFFIX = "; using 'index'."
+
 -- Module-group settings keys (Waybar `modules-*`). Phase A renders left, then
 -- center, then right into one inset row: a true center/right alignment needs a
 -- Spacer/flex node (Phase C), so the groups keep their declarative order.
@@ -219,12 +232,14 @@ M.SPECTRUM_PEAK_HOLD_TICKS = 4
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
 -- `workspace.bar.edge`; `show_single` opts into a lone-workspace bar, which
--- Core always hid. `name_max_chars` keeps the Core pill-name bound.
+-- Core always hid. `name_max_chars` keeps the Core pill-name bound and
+-- `label` selects the capsule label mode.
 M.DEFAULTS = {
   show = true,
   edge = "bottom",
   show_single = false,
   name_max_chars = M.NAME_MAX_CHARS,
+  label = M.LABEL_DEFAULT,
 }
 
 -- A band whose text is empty is not painted by the host.
@@ -389,6 +404,44 @@ function M.tooltip_payload(text)
   return { title = M.TOOLTIP_TITLE, body = text }
 end
 
+-- Bounded diagnostic body for a rejected `label` value, or nil when the value
+-- is absent or accepted. The echoed value is cut to
+-- `LABEL_DIAGNOSTIC_MAX_CHARS` characters and control bytes are replaced, so
+-- the diagnostic stays one short printable line. A present-but-invalid value
+-- keeps the default `index` label (the bar still paints) and reports once.
+function M.label_diagnostic(value)
+  if value == nil then
+    return nil
+  end
+  if type(value) == "string" and M.LABELS[value] == true then
+    return nil
+  end
+  local shown
+  if type(value) == "string" then
+    local text = M.truncate_chars(value, M.LABEL_DIAGNOSTIC_MAX_CHARS)
+    text = string.gsub(text, "%c", "?")
+    shown = "'" .. text .. "'"
+  else
+    shown = type(value)
+  end
+  return M.LABEL_DIAGNOSTIC_PREFIX .. shown .. M.LABEL_DIAGNOSTIC_SUFFIX
+end
+
+-- Capsule label text for one workspace row under the selected `label` mode.
+-- `index` is the stable seq only; `name` the truncated name; `both` keeps the
+-- historical `id:name` pair. An empty name falls back to the seq so a pill is
+-- never blank (a blank label would paint invisible, unclickable chrome).
+function M.pill_label(row, opts)
+  local name = M.truncate_chars(row.name, opts.name_max_chars)
+  if opts.label == "name" and name ~= "" then
+    return name
+  end
+  if opts.label == "both" and name ~= "" then
+    return tostring(row.id) .. ":" .. name
+  end
+  return tostring(row.id)
+end
+
 -- Reads and validates the plugin settings; any absent or invalid value falls
 -- back to its default so a bad configuration never hides or breaks the bar.
 function M.read_settings(get)
@@ -412,6 +465,11 @@ function M.read_settings(get)
   if is_integer(name_max) and name_max >= 1 and name_max <= M.NAME_MAX_CHARS then
     opts.name_max_chars = name_max
   end
+  local label = get("label")
+  if type(label) == "string" and M.LABELS[label] == true then
+    opts.label = label
+  end
+  opts.label_diagnostic = M.label_diagnostic(label)
   opts.specs = M.read_plan(get, opts)
   return opts
 end
@@ -448,8 +506,8 @@ end
 -- Scratchpad indicator segment for the occupied slot, or nil when empty. The
 -- count rides the state and is shown only when it exceeds the single-slot
 -- ceiling (never on current hosts, where presence alone carries the `0`/`1`).
--- Appended after the workspace count suffix so the Core workspaceline text
--- stays an exact prefix; never clickable (no panel capability is involved).
+-- Appended after the capsule list with a single-space separator; never
+-- clickable (no panel capability is involved).
 function M.scratchpad_segment(rows)
   local state = M.scratchpad_state(rows)
   if not state.occupied then
@@ -480,13 +538,13 @@ function M.visible(rows, opts)
 end
 
 -- Ordered bar segments before the byte bound: one capsule per workspace
--- (`[stable-id:name]` plus state marks) and single-space separators. The
--- scratchpad indicator remains available after the capsule list when the slot is
--- occupied. The id is the stable workspace seq from
+-- (`[label]` plus state marks) and single-space separators. The label follows
+-- `opts.label` (`index` by default: the stable seq alone, so a two-workspace
+-- bar paints `[1] [2*]`). The id stays the stable workspace seq from
 -- `bitty.workspace.list()` (Core `workspaceline_tokens` renders `slot.seq`),
--- so closing a workspace never renumbers the survivors. Without an occupied
--- scratchpad the concatenated text equals Core `workspaceline_text` for the
--- same rows.
+-- so closing a workspace never renumbers the survivors. The scratchpad
+-- indicator remains available after the capsule list when the slot is
+-- occupied.
 function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
@@ -523,7 +581,7 @@ function M.segments(rows, opts)
         (attention.bell == true or attention.activity == true or attention.exited == true) then
       marks = marks .. M.ATTENTION_MARK
     end
-    local label = tostring(row.id) .. ":" .. M.truncate_chars(row.name, opts.name_max_chars)
+    local label = M.pill_label(row, opts)
     if marks ~= "" then
       label = label .. marks
     end
@@ -570,7 +628,7 @@ local function segment_atom(segment)
   return atom
 end
 
--- Workspaces module render: the Core-parity pill strip as atoms.
+-- Workspaces module render: the capsule strip as chassis atoms.
 function M.workspaces_atoms(rows, opts)
   local atoms = {}
   for _, segment in ipairs(M.segments(rows, opts)) do
@@ -2341,7 +2399,30 @@ local function now_seconds()
   return nil
 end
 
+-- Reports a rejected `label` value through the already-declared
+-- platform.notify grant: best-effort, bounded, and deduplicated per distinct
+-- diagnostic so a reload storm cannot spam the notify surface. An ungranted or
+-- absent notify surface never breaks activation; the fallback label still
+-- paints (never a silent empty bar).
+local reported_label_diagnostic = nil
+local function report_label_diagnostic(settings)
+  local body = settings.label_diagnostic
+  if body == nil then
+    reported_label_diagnostic = nil
+    return
+  end
+  if body == reported_label_diagnostic then
+    return
+  end
+  reported_label_diagnostic = body
+  if bitty.notify == nil or bitty.notify.show == nil then
+    return
+  end
+  pcall(bitty.notify.show, { title = M.TOOLTIP_TITLE, body = body })
+end
+
 local opts = M.read_settings(settings_get)
+report_label_diagnostic(opts)
 local timers = {}
 
 local function build_component()
@@ -2667,6 +2748,7 @@ bitty.events.subscribe("config.reloaded", function()
   local edge = opts.edge
   opts = M.read_settings(settings_get)
   opts.edge = edge
+  report_label_diagnostic(opts)
   -- Grants may have changed with the reload: drop negotiated handles so the
   -- next poll re-negotiates instead of serving a revoked generation.
   M._providers = {}

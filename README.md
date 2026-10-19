@@ -13,17 +13,21 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
 
 ## Workspace bar
 
-- One capsule per workspace, `[stable-id:name]`, joined by single spaces. The
-  id is the stable workspace seq from `bitty.workspace.list()`, so closing a
-  workspace never renumbers the survivors. The active capsule carries `*`,
-  bold, `background` foreground, and the `accent` background theme tokens.
+- One capsule per workspace, `[label]`, joined by single spaces. `label`
+  defaults to the stable workspace seq alone (`[1] [2*]`), which keeps the bar
+  quiet; `label = "name"` renders the truncated name (`[shell]`) and
+  `label = "both"` the historical `id:name` pair (`[1:shell]`). The id is the
+  stable workspace seq from `bitty.workspace.list()`, so closing a workspace
+  never renumbers the survivors. The active capsule carries `*`, bold,
+  `background` foreground, and the `accent` background theme tokens.
   Occupied workspaces carry `+` when `panel_count > 0`; attention (`bell`,
   `activity`, or `exited`) carries `!` with `cursor` emphasis. An empty
   workspace list renders `—` (fail closed).
-- Names are cut to 32 characters (or `name_max_chars`); complete capsules are
-  retained in stable numeric id order and the line is bounded to 1024 UTF-8
-  bytes. A capsule remains one styled `Text` atom, preserving its complete
-  click target.
+- In `name` and `both` modes, names are cut to 32 characters (or
+  `name_max_chars`); an empty name falls back to the seq, so a capsule is
+  never blank. Complete capsules are retained in stable numeric id order and
+  the line is bounded to 1024 UTF-8 bytes. A capsule remains one styled `Text`
+  atom, preserving its complete click target.
 - A lone workspace hides the bar unless `show_single = true`.
 - Clicking an inactive capsule runs `bitty-terminal.bar:focus { id }`, which
   queues `bitty.workspace.focus(id)` by stable id. The active capsule,
@@ -43,9 +47,15 @@ or invalid values fall back to the default.
 | `edge`           | string  | `"bottom"`       | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
 | `show_single`    | boolean | `false`          | none (Core always hid it)   | Live on `config.reloaded`.              |
 | `name_max_chars` | integer | `32`             | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
+| `label`          | string  | `"index"`        | none                        | `"index"`, `"name"`, or `"both"`; live. |
 | `modules_left`   | array   | `["workspaces"]` | none                        | Ordered module names; live.             |
 | `modules_center` | array   | `[]`             | none                        | Rendered after left; live.              |
 | `modules_right`  | array   | `[]`             | none                        | Rendered after center; live.            |
+
+An unknown or non-string `label` value falls back to `index` (the bar still
+paints) and reports one bounded notification through the already-requested
+`platform.notify` grant; an ungranted notify surface drops the report without
+affecting the bar. `name_max_chars` only applies in `name` and `both` modes.
 
 `edge` applies on the next plugin generation because `bitty.ui.mount` is valid
 only during activation and v1 has no unmount or move.
@@ -303,7 +313,7 @@ Gaps in the current host, not in this plugin:
 | `lua/bar/init.lua`            | Entry point evaluated once per activation; pure functions exported on `M`.   |
 | `tests/harness.ts`            | Runs `init.lua` in a Lua 5.4 VM (wasmoon) against the SDK mock host.         |
 | `tests/core-workspaceline.ts` | Reference model of the retired Core workspaceline (bitty@55f9d336).          |
-| `tests/bar.test.ts`           | Behavior, Core parity, and capability-gate tests.                            |
+| `tests/bar.test.ts`           | Behavior, capsule label, and capability-gate tests.                          |
 | `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
 | `tests/devices.test.ts`       | Phase B device module tests (network, bluetooth, backlight, idle).           |
 | `tests/audio.test.ts`         | Audio module tests (pulseaudio state/control, spectrum meter, rate bounds).  |
@@ -323,7 +333,8 @@ lua` parses the entry point with the pinned `luaparse` (Lua 5.1 grammar) and
 entry point against the SDK `MockHost`, which owns capability gates, the
 activation registration window, scene-node validation, command argument
 schemas, event declarations, and the bounded workspace request queue; the
-parity tests compare every painted column with the Core reference model.
+behavior suites cover capsule label modes, click targets, scratchpad, modules,
+and capability gates.
 
 ## Security
 

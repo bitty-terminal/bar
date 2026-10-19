@@ -94,9 +94,13 @@ audio.spectrum = true
 # Declared settings keys read through `bitty.settings.get` (bitty#2010 /
 # CTX-1195; an undeclared read fails closed with `E_SETTINGS_UNDECLARED`,
 # so every key below must be declared or activation aborts).
-# - Chassis scalars (`show`, `edge`, `show_single`, `name_max_chars`) mirror
-#   `M.DEFAULTS`; the module-group lists (`modules_left/_center/_right`)
+# - Chassis scalars (`show`, `edge`, `show_single`, `name_max_chars`, `label`)
+#   mirror `M.DEFAULTS`; the module-group lists (`modules_left/_center/_right`)
 #   mirror `M.MODULE_GROUPS` (absent groups fall back to the default plan).
+#   `label` is a bounded string enum (`index` | `name` | `both`); v1 settings
+#   have no enum kind, so the shipped default plus the local closed-set check
+#   in `M.read_settings` own the fallback (an unknown value paints `index`
+#   and reports one bounded diagnostic).
 # - Per-module option collections (`workspaces`, `clock`, `network`,
 #   `bluetooth`, `backlight`, `idle`, `pulseaudio`, `spectrum`, `cpu`,
 #   `memory`, `battery`) are read as one table per module name
@@ -113,6 +117,7 @@ show = { type = "bool", default = true }
 edge = { type = "string", default = "bottom" }
 show_single = { type = "bool", default = false }
 name_max_chars = { type = "int", default = 32 }
+label = { type = "string", default = "index" }
 modules_left = { type = "string-array", default = ["workspaces"] }
 modules_center = { type = "string-array", default = [] }
 modules_right = { type = "string-array", default = [] }

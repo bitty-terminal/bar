@@ -137,7 +137,7 @@ describe("network module (bitty#2012)", () => {
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -152,7 +152,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(badLink)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(badLink)).toBe("[1] [4*] [9]");
 
     const failing = await bar({
       workspaces: THREE,
@@ -168,7 +168,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(failing)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(failing)).toBe("[1] [4*] [9]");
     expect(failing.host.handlerViolations).toEqual([]);
   });
 
@@ -326,7 +326,7 @@ describe("bluetooth module (bitty#2017)", () => {
       workspaces: THREE,
       settings: { modules_left: ["bluetooth", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(ungranted)).toBe("[1] [4*] [9]");
 
     const misshapen = await bar({
       workspaces: THREE,
@@ -338,7 +338,7 @@ describe("bluetooth module (bitty#2017)", () => {
         },
       },
     });
-    expect(painted(misshapen)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(misshapen)).toBe("[1] [4*] [9]");
   });
 });
 
@@ -447,7 +447,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
         "backlight.state": { version: "1.0.0", impl: backlightState(500) },
       },
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
   });
 });
 
@@ -536,7 +536,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
       workspaces: THREE,
       settings: { modules_left: ["idle", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(ungranted)).toBe("[1] [4*] [9]");
   });
 });
 

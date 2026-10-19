@@ -222,7 +222,7 @@ describe("cpu module", () => {
       grants: SENSOR_GRANTS,
       services: { [CPU]: { snapshot: CPU_SNAP } },
     });
-    expect(painted(run)).toBe("42% [1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("42% [1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -302,7 +302,7 @@ describe("cpu module", () => {
       settings: { modules_left: ["cpu", "workspaces"] },
       grants: SENSOR_GRANTS,
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -330,7 +330,7 @@ describe("cpu module", () => {
         grants: SENSOR_GRANTS,
         services,
       });
-      expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+      expect(painted(run)).toBe("[1] [4*] [9]");
       expect(run.host.handlerViolations).toEqual([]);
     }
   });
@@ -381,10 +381,10 @@ describe("cpu module", () => {
         },
       },
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     run.host.advanceTimers(2000);
     expect(run.updates()).toBe(1);
-    expect(painted(run)).toBe("42% [1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("42% [1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -454,7 +454,7 @@ describe("memory module", () => {
       settings: { modules_left: ["memory", "workspaces"] },
       grants: SENSOR_GRANTS,
     });
-    expect(painted(absent)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(absent)).toBe("[1] [4*] [9]");
     expect(absent.host.handlerViolations).toEqual([]);
   });
 });
@@ -585,7 +585,7 @@ describe("battery module", () => {
         grants: SENSOR_GRANTS,
         services,
       });
-      expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+      expect(painted(run)).toBe("[1] [4*] [9]");
       expect(run.host.handlerViolations).toEqual([]);
     }
   });

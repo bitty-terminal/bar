@@ -96,9 +96,10 @@ describe("rendering parity with the Core workspaceline", () => {
     test(`${name}: only inactive capsules carry stable-id clicks`, async () => {
       const run = await bar({ workspaces: rows });
       for (const leaf of leaves(run.component())) {
-        if (leaf.text?.startsWith("[") && leaf.text.endsWith("]")) {
-          const row = rows.find((candidate) =>
-            leaf.text?.startsWith(`[${candidate.id}:`),
+        const capsule = /^\[(\d+)[*+!]*\]$/.exec(leaf.text ?? "");
+        if (capsule !== null) {
+          const row = rows.find(
+            (candidate) => candidate.id === Number(capsule[1]),
           );
           if (row?.active) expect(leaf.on_click).toBeUndefined();
           else expect(leaf.on_click?.args).toEqual({ id: row?.id });
@@ -132,15 +133,15 @@ describe("rendering parity with the Core workspaceline", () => {
   test("active and inactive workspaces render as distinct capsules", async () => {
     const run = await bar({ workspaces: THREE });
     expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
-      "[1:ws1]",
+      "[1]",
       " ",
-      "[4:code*]",
+      "[4*]",
       " ",
-      "[9:logs]",
+      "[9]",
     ]);
     expect(leaves(run.component())[2]).toEqual({
       kind: "Text",
-      text: "[4:code*]",
+      text: "[4*]",
       fg: "background",
       bg: "accent",
       bold: true,
@@ -155,11 +156,11 @@ describe("rendering parity with the Core workspaceline", () => {
     ];
     const run = await bar({ workspaces: rows });
     expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
-      "[1:idle]",
+      "[1]",
       " ",
-      "[4:busy*+]",
+      "[4*+]",
       " ",
-      "[9:urgent!]",
+      "[9!]",
     ]);
     expect(leaves(run.component())[2]?.bold).toBe(true);
     expect(leaves(run.component())[4]?.fg).toBe("cursor");
@@ -170,12 +171,149 @@ describe("rendering parity with the Core workspaceline", () => {
       workspaces: [ws(9, "logs"), ws(1, "shell"), ws(4, "code", true)],
     });
     expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
-      "[1:shell]",
+      "[1]",
       " ",
-      "[4:code*]",
+      "[4*]",
       " ",
-      "[9:logs]",
+      "[9]",
     ]);
+  });
+});
+
+describe("workspace label modes", () => {
+  const TWO = [ws(1, "ws1"), ws(2, "ws2", true)];
+
+  test("the default renders the stable seq only, without a count suffix", async () => {
+    const run = await bar({ workspaces: TWO });
+    expect(painted(run)).toBe("[1] [2*]");
+    expect(painted(run)).not.toContain("(");
+  });
+
+  test("name renders the truncated workspace name", async () => {
+    const run = await bar({ workspaces: TWO, settings: { label: "name" } });
+    expect(painted(run)).toBe("[ws1] [ws2*]");
+  });
+
+  test("both restores the id:name pair", async () => {
+    const run = await bar({ workspaces: TWO, settings: { label: "both" } });
+    expect(painted(run)).toBe("[1:ws1] [2:ws2*]");
+  });
+
+  test("an empty name falls back to the seq, never a blank capsule", async () => {
+    const run = await bar({
+      workspaces: [ws(3, "", true)],
+      settings: { label: "name", show_single: true },
+    });
+    expect(painted(run)).toBe("[3*]");
+  });
+
+  test("the active marker and accent styling are mode-independent", async () => {
+    for (const label of ["index", "name", "both"]) {
+      const run = await bar({ workspaces: TWO, settings: { label } });
+      const active = leaves(run.component()).filter(
+        (leaf) => leaf.bold === true,
+      );
+      expect(active.length).toBe(1);
+      expect(active[0]?.text?.endsWith("*]")).toBe(true);
+      expect(active[0]?.fg).toBe("background");
+      expect(active[0]?.bg).toBe("accent");
+    }
+  });
+
+  test("click targets stay unchanged in every mode", async () => {
+    for (const label of ["index", "name", "both"]) {
+      const run = await bar({ workspaces: TWO, settings: { label } });
+      const inactive = leaves(run.component()).find(
+        (leaf) => leaf.on_click?.args?.id === 1,
+      )!;
+      expect(inactive).toBeDefined();
+      const active = leaves(run.component()).find(
+        (leaf) => leaf.text?.endsWith("*]") === true,
+      )!;
+      expect(active.on_click).toBeUndefined();
+      expect(
+        leaves(run.component())
+          .filter((leaf) => leaf.text === " ")
+          .every((leaf) => leaf.on_click === undefined),
+      ).toBe(true);
+    }
+  });
+
+  test("an unknown value falls back to index with one bounded diagnostic", async () => {
+    const run = await bar({ workspaces: TWO, settings: { label: "short" } });
+    expect(painted(run)).toBe("[1] [2*]");
+    expect(run.host.notifications).toEqual([
+      {
+        title: "Unified Bar",
+        body: "Unified Bar: unknown label 'short'; using 'index'.",
+      },
+    ]);
+  });
+
+  test("the diagnostic echoes at most 32 characters of the rejected value", async () => {
+    const run = await bar({
+      workspaces: TWO,
+      settings: { label: "x".repeat(80) },
+    });
+    expect(painted(run)).toBe("[1] [2*]");
+    expect(run.host.notifications).toEqual([
+      {
+        title: "Unified Bar",
+        body: `Unified Bar: unknown label '${"x".repeat(32)}'; using 'index'.`,
+      },
+    ]);
+  });
+
+  test("a non-string value is rejected by read_settings itself", async () => {
+    // A strict host fails a wrong-typed declared setting to its default before
+    // Lua sees it, so the defensive branch is proven on the pure function.
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const mod = (await lua.doString(ENTRY_SOURCE)) as {
+        read_settings(get: (key: string) => unknown): {
+          label: string;
+          label_diagnostic?: string;
+        };
+      };
+      const opts = mod.read_settings((key) =>
+        key === "label" ? 7 : undefined,
+      );
+      expect(opts.label).toBe("index");
+      expect(opts.label_diagnostic).toBe(
+        "Unified Bar: unknown label number; using 'index'.",
+      );
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("without platform.notify the fallback still paints (no report)", async () => {
+    const run = await bar({
+      workspaces: TWO,
+      settings: { label: "short" },
+      grants: ["ui.rich", "workspace.read", "workspace.control"],
+    });
+    expect(painted(run)).toBe("[1] [2*]");
+    expect(run.host.notifications).toEqual([]);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("the empty list and the byte bound are unchanged", async () => {
+    const empty = await bar({ workspaces: [] });
+    expect(painted(empty)).toBe("\u2014");
+
+    const rows = Array.from({ length: 16 }, (_, i) =>
+      ws(i + 1, "界".repeat(32), i === 15),
+    );
+    const run = await bar({ workspaces: rows });
+    const text = textOf(run.component());
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(
+      core.WORKSPACELINE_MAX_CHARS,
+    );
+    expect(text).toBe(
+      "[1] [2] [3] [4] [5] [6] [7] [8] [9] [10] [11] [12] [13] [14] [15] [16*]",
+    );
   });
 });
 
@@ -192,7 +330,7 @@ describe("visibility", () => {
       workspaces: [ws(1, "ws1", true)],
       settings: { show_single: true },
     });
-    expect(painted(run)).toBe("[1:ws1*]");
+    expect(painted(run)).toBe("[1*]");
   });
 
   test("show = false hides the bar like workspace.show_bar = false", async () => {
@@ -204,18 +342,42 @@ describe("visibility", () => {
   test("invalid settings fall back to defaults", async () => {
     const run = await bar({
       workspaces: THREE,
-      settings: { show: "no", edge: "left", show_single: 1, name_max_chars: 0 },
+      settings: {
+        show: "no",
+        edge: "left",
+        show_single: 1,
+        name_max_chars: 0,
+        label: "id",
+      },
     });
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(run.host.notifications).toEqual([
+      {
+        title: "Unified Bar",
+        body: "Unified Bar: unknown label 'id'; using 'index'.",
+      },
+    ]);
   });
 
-  test("name_max_chars shortens pill labels", async () => {
-    const run = await bar({
+  test("name_max_chars shortens labels in name and both modes", async () => {
+    const byName = await bar({
+      workspaces: THREE,
+      settings: { label: "name", name_max_chars: 2 },
+    });
+    expect(painted(byName)).toBe("[ws] [co*] [lo]");
+
+    const byBoth = await bar({
+      workspaces: THREE,
+      settings: { label: "both", name_max_chars: 2 },
+    });
+    expect(painted(byBoth)).toBe("[1:ws] [4:co*] [9:lo]");
+
+    const byIndex = await bar({
       workspaces: THREE,
       settings: { name_max_chars: 2 },
     });
-    expect(painted(run)).toBe("[1:ws] [4:co*] [9:lo]");
+    expect(painted(byIndex)).toBe("[1] [4*] [9]");
   });
 });
 
@@ -238,15 +400,15 @@ describe("live updates", () => {
 
     run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2", true)]);
     run.host.publish("workspace.created", { id: 2, name: "ws2" });
-    expect(painted(run)).toBe("[1:ws1] [2:ws2*]");
+    expect(painted(run)).toBe("[1] [2*]");
 
     run.host.setWorkspaces([ws(1, "build", true), ws(2, "ws2")]);
     run.host.publish("workspace.renamed", { id: 1, name: "build" });
-    expect(painted(run)).toBe("[1:build*] [2:ws2]");
+    expect(painted(run)).toBe("[1*] [2]");
 
     run.host.setWorkspaces([ws(1, "build"), ws(2, "ws2", true)]);
     run.host.publish("workspace.focused", { id: 2 });
-    expect(painted(run)).toBe("[1:build] [2:ws2*]");
+    expect(painted(run)).toBe("[1] [2*]");
 
     run.host.setWorkspaces([ws(2, "ws2", true)]);
     run.host.publish("workspace.closed", { id: 1 });
@@ -258,35 +420,39 @@ describe("live updates", () => {
     const run = await bar({
       workspaces: [ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)],
     });
-    expect(painted(run)).toBe("[1:ws1] [2:ws2] [3:ws3*]");
+    expect(painted(run)).toBe("[1] [2] [3*]");
 
-    // Live proof: closing #1 leaves Core painting `2:ws2 3:ws3*`; the
-    // position-based plugin painted `1:ws2 2:ws3*` instead.
+    // Live proof: closing #1 leaves the survivors at their stable seq
+    // (`[2] [3*]`); a position-based plugin would paint `[1] [2*]` instead.
     run.host.setWorkspaces([ws(2, "ws2"), ws(3, "ws3", true)]);
     run.host.publish("workspace.closed", { id: 1 });
-    const afterFirstClose = [ws(2, "ws2"), ws(3, "ws3", true)];
-    expect(painted(run)).toBe("[2:ws2] [3:ws3*]");
+    expect(painted(run)).toBe("[2] [3*]");
 
     // Closing the middle never renumbers the tail either.
     run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2"), ws(3, "ws3", true)]);
     run.host.publish("workspace.created", { id: 1, name: "ws1" });
     run.host.setWorkspaces([ws(1, "ws1"), ws(3, "ws3", true)]);
     run.host.publish("workspace.closed", { id: 2 });
-    const afterMiddleClose = [ws(1, "ws1"), ws(3, "ws3", true)];
-    expect(painted(run)).toBe("[1:ws1] [3:ws3*]");
+    expect(painted(run)).toBe("[1] [3*]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("config.reloaded applies show and label settings live", async () => {
+  test("config.reloaded applies show, label, and name_max_chars live", async () => {
     const run = await bar({ workspaces: THREE });
+    expect(painted(run)).toBe("[1] [4*] [9]");
     run.host.bitty.settings.set("show", false);
     run.host.publish("config.reloaded", {});
     expect(painted(run)).toBeUndefined();
 
     run.host.bitty.settings.set("show", true);
+    run.host.bitty.settings.set("label", "both");
     run.host.bitty.settings.set("name_max_chars", 1);
     run.host.publish("config.reloaded", {});
     expect(painted(run)).toBe("[1:w] [4:c*] [9:l]");
+
+    run.host.bitty.settings.set("label", "name");
+    run.host.publish("config.reloaded", {});
+    expect(painted(run)).toBe("[w] [c*] [l]");
   });
 
   test("an edge change waits for the next generation (mounts are activation-only)", async () => {
@@ -294,7 +460,7 @@ describe("live updates", () => {
     run.host.bitty.settings.set("edge", "top");
     run.host.publish("config.reloaded", {});
     expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 });
@@ -302,9 +468,7 @@ describe("live updates", () => {
 describe("click to focus", () => {
   test("clicking an inactive pill queues focus by stable id", async () => {
     const run = await bar({ workspaces: THREE });
-    const pill = leaves(run.component()).find(
-      (leaf) => leaf.text === "[9:logs]",
-    )!;
+    const pill = leaves(run.component()).find((leaf) => leaf.text === "[9]")!;
     const { command, args } = pill.on_click!;
     expect(run.host.dispatchCommand(command, args)).toBe(true);
     expect(run.host.drainWorkspaceRequests()).toEqual([
@@ -359,7 +523,7 @@ describe("capability gates", () => {
       workspaces: THREE,
       grants: ["ui.rich", "workspace.read"],
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
       HostError,
     );
@@ -376,27 +540,27 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
   test("an empty slot renders no indicator (Core parity preserved)", async () => {
     const rows = THREE.map((row) => ws(row.id, row.name, row.active, EMPTY));
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
   test("rows from a host without the surface render no indicator", async () => {
     const run = await bar({ workspaces: THREE });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
   test("an occupied slot appends the indicator after the Core text", async () => {
     const rows = occupiedRows(THREE);
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(painted(run)).toBe("[1] [4*] [9] [scratchpad]");
+    expect(painted(run)).toBe("[1] [4*] [9] [scratchpad]");
     const active = leaves(run.component()).filter((leaf) => leaf.bold === true);
     expect(active).toEqual([
       {
         kind: "Text",
-        text: "[4:code*]",
+        text: "[4*]",
         bold: true,
         fg: "background",
         bg: "accent",
@@ -425,7 +589,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
       ws(row.id, row.name, row.active, { count: 2, occupied: true }),
     );
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad:2]");
+    expect(painted(run)).toBe("[1] [4*] [9] [scratchpad:2]");
   });
 
   test("invalid scratchpad fields read as empty (fail closed)", async () => {
@@ -437,7 +601,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
         }) as WorkspaceInfo,
     );
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(textOf(run.component())).not.toContain("scratchpad");
   });
 
@@ -447,18 +611,18 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
 
     run.host.setWorkspaces(occupiedRows(THREE));
     run.host.publish("workspace.changed", { id: 4 });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(painted(run)).toBe("[1] [4*] [9] [scratchpad]");
 
     run.host.setWorkspaces(THREE);
     run.host.publish("workspace.changed", { id: 4 });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
   test("a lone workspace with an occupied slot shows the bar", async () => {
     const rows = [ws(1, "ws1", true, OCCUPIED)];
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBe("[1:ws1*] [scratchpad]");
+    expect(painted(run)).toBe("[1*] [scratchpad]");
   });
 
   test("occupancy needs no grant beyond workspace.read", async () => {
@@ -467,7 +631,7 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
       workspaces: rows,
       grants: ["ui.rich", "workspace.read"],
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs] [scratchpad]");
+    expect(painted(run)).toBe("[1] [4*] [9] [scratchpad]");
     expect(() => run.host.dispatchCommand(FOCUS_COMMAND, { id: 1 })).toThrow(
       HostError,
     );
@@ -483,7 +647,7 @@ describe("headless activation regression (bar#6)", () => {
     const run = await bar({
       workspaces: [ws(1, "main", true), ws(2, "alt")],
     });
-    expect(painted(run)).toBe("[1:main*] [2:alt]");
+    expect(painted(run)).toBe("[1*] [2]");
   });
 
   test("truncate_chars counts portably without pattern bytes", async () => {
