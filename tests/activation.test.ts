@@ -108,6 +108,7 @@ describe("activation manifest declarations", () => {
       edge: { kind: "string", def: "bottom" },
       show_single: { kind: "bool", def: false },
       name_max_chars: { kind: "int", def: 32 },
+      label: { kind: "string", def: "index" },
       modules_left: { kind: "string-array", def: ["workspaces"] },
       modules_center: { kind: "string-array", def: [] },
       modules_right: { kind: "string-array", def: [] },
@@ -165,7 +166,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("42% [1:ws1] [4:code*] [9:logs]");
+    expect(painted(live)).toBe("42% [1] [4*] [9]");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
@@ -173,7 +174,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       settings: { modules_left: ["cpu", "workspaces"] },
       grants: [...SENSOR_GRANTS],
     });
-    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(dark)).toBe("[1] [4*] [9]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -195,14 +196,14 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("wifi 8.0K/4.0K [1:ws1] [4:code*] [9:logs]");
+    expect(painted(live)).toBe("wifi 8.0K/4.0K [1] [4*] [9]");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(dark)).toBe("[1] [4*] [9]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -219,7 +220,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(run)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(run)).toBe("[1] [4*] [9]");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -236,7 +237,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       workspaces: THREE,
       settings: { modules_left: ["pulseaudio", "workspaces"] },
     });
-    expect(painted(dark)).toBe("[1:ws1] [4:code*] [9:logs]");
+    expect(painted(dark)).toBe("[1] [4*] [9]");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 });
