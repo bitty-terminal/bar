@@ -29,8 +29,29 @@ const DETAIL_COMMAND = "bitty-terminal.bar:detail";
 
 const runs: BarRun[] = [];
 
-async function bar(...args: Parameters<typeof activateBar>): Promise<BarRun> {
-  const run = await activateBar(...args);
+/**
+ * These tests pin the workspace-only center (`modules_center: []`) so plan
+ * ordering assertions stay focused; `defaultBar` exercises the shipped
+ * default plan itself (workspaces left, clock center, empty right).
+ */
+const NO_CENTER = { modules_center: [] } as const;
+
+async function bar(
+  options: Parameters<typeof activateBar>[0] = {},
+): Promise<BarRun> {
+  const run = await activateBar({
+    ...options,
+    settings: { ...NO_CENTER, ...options.settings },
+  });
+  runs.push(run);
+  return run;
+}
+
+/** Activates with no settings override, exercising the shipped defaults. */
+async function defaultBar(
+  options: Parameters<typeof activateBar>[0] = {},
+): Promise<BarRun> {
+  const run = await activateBar(options);
   runs.push(run);
   return run;
 }
@@ -51,9 +72,11 @@ const THREE: WorkspaceInfo[] = [
 ];
 
 describe("declarative module list", () => {
-  test("the default plan renders the workspaces module (behavior preserving)", async () => {
-    const run = await bar({ workspaces: THREE });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+  test("the shipped default plan is left=workspaces, center=clock, right=[]", async () => {
+    const run = await defaultBar({ workspaces: THREE });
+    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
+    expect(run.mounts.length).toBe(1);
+    expect(run.host.handlerViolations).toEqual([]);
   });
 
   test("modules_left order drives render order", async () => {
@@ -63,9 +86,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(painted(run)).toMatch(
-      /^\d\d:\d\d \[1\] \[4\*\] \[9\]$/,
-    );
+    expect(painted(run)).toMatch(/^\d\d:\d\d \[1\] \[4\*\] \[9\]$/);
   });
 
   test("reordering the settings reorders the render", async () => {
@@ -73,9 +94,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["workspaces", "clock"] },
     });
-    expect(painted(run)).toMatch(
-      /^\[1\] \[4\*\] \[9\] \d\d:\d\d$/,
-    );
+    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
   });
 
   test("modules_right renders after the left group", async () => {
@@ -86,9 +105,7 @@ describe("declarative module list", () => {
         modules_right: ["clock"],
       },
     });
-    expect(painted(run)).toMatch(
-      /^\[1\] \[4\*\] \[9\] \d\d:\d\d$/,
-    );
+    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
   });
 
   test("modules_center keeps its declared position (true centering is Phase C)", async () => {
@@ -99,9 +116,7 @@ describe("declarative module list", () => {
         modules_center: ["workspaces"],
       },
     });
-    expect(painted(run)).toMatch(
-      /^\d\d:\d\d \[1\] \[4\*\] \[9\]$/,
-    );
+    expect(painted(run)).toMatch(/^\d\d:\d\d \[1\] \[4\*\] \[9\]$/);
   });
 
   test("unknown module names are skipped", async () => {
@@ -125,7 +140,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["rm -rf /"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
   });
 
   test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
@@ -353,6 +368,23 @@ describe("pure chassis helpers", () => {
     lua.global.close();
   });
 
+  test("the default module plan is left=workspaces, center=clock, right=[]", async () => {
+    expect(mod["MODULE_GROUPS"]).toEqual([
+      "modules_left",
+      "modules_center",
+      "modules_right",
+    ]);
+    const groups = mod["DEFAULT_MODULE_PLAN"] as Record<string, unknown>;
+    expect(groups["modules_left"]).toEqual(["workspaces"]);
+    expect(groups["modules_center"]).toEqual(["clock"]);
+    // An empty Lua table bridges as an empty object, not an empty array.
+    expect(groups["modules_right"]).toEqual({});
+    const plan = (await mod["read_plan"](() => undefined)) as Array<{
+      name: string;
+    }>;
+    expect(plan.map((spec) => spec.name)).toEqual(["workspaces", "clock"]);
+  });
+
   test("render_template substitutes {key} and keeps unknown keys", () => {
     expect(mod["render_template"]("{a}%", { a: 42 })).toBe("42%");
     expect(mod["render_template"]("cpu {pct}%", { pct: 7 })).toBe("cpu 7%");
@@ -453,7 +485,7 @@ describe("pure chassis helpers", () => {
 
     delete cfg["modules_left"];
     const fallback = mod["read_plan"](get) as Array<{ name: string }>;
-    expect(fallback.map((spec) => spec.name)).toEqual(["workspaces"]);
+    expect(fallback.map((spec) => spec.name)).toEqual(["workspaces", "clock"]);
   });
 
   test("the module registry exposes workspaces, clock, and the Phase B device, sensor, and audio modules", () => {
