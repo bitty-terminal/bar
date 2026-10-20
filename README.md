@@ -2,14 +2,139 @@
 
 Consolidated workspace-bar, tabs, and statusline presentation over generic chrome insets.
 
-[ADR-0014](https://github.com/bitty-terminal/bitty-docs/blob/main/docs/decisions/adrs/ADR-0014-workspace-core-presentation-plugins.md)
-keeps Workspace as a Core mechanism and moves every workspace presentation
-into plugins. This plugin's first module is the workspace bar: it renders what
-the retired Core workspaceline drew, over the Plugin API v1 surface only.
+## Overview
 
-> Status: pre-implementation. Behavior is verified against the
+Unified Bar renders the workspace capsule strip and a configurable set of
+system modules (clock, CPU, memory, battery, network, Bluetooth, backlight,
+idle, and audio) in one chrome band. Workspace mechanism stays in Core; the
+plugin presents `bitty.workspace.list()` and forwards an explicit focus
+request. System modules read optional broker providers and hide fail closed
+when a provider is absent or ungranted.
+
+> Status: pre-implementation ecosystem. Behavior is verified against the
 > bitty-plugin-sdk mock host (pinned by commit), not against a released host.
-> Tabs and statusline modules are not implemented yet.
+> The workspace bar and system modules are implemented; tabs and statusline
+> modules are not implemented yet.
+
+## Install
+
+Prerequisites: Bitty `>=0.0.24,<0.1` and Plugin API `^1.0` (from
+`bitty-plugin.toml` `[compat]`). Optional system modules additionally need
+their broker providers and the matching capability grants; a missing provider
+hides that module rather than the whole bar.
+
+```sh
+bitty plugin install https://github.com/bitty-terminal/bar.git
+bitty plugin enable bitty-terminal.bar
+bitty plugin list   # confirm state and grants
+```
+
+From a local checkout:
+
+```sh
+bitty plugin install ./bar --yes
+bitty plugin enable bitty-terminal.bar
+```
+
+`bitty plugin list` confirms activation: the entry must be enabled and list the
+granted capabilities. A disabled entry carries a `disabled_reason`; see
+[Troubleshooting](#troubleshooting).
+
+## Commands
+
+| Command                               | What it does                                                                                    | Arguments                                 | Default keybinding  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------- |
+| `bitty-terminal.bar:focus`            | Focus a workspace by stable id; the click target for every inactive capsule.                    | `id` (integer, required, `>= 1`)          | None (click target) |
+| `bitty-terminal.bar:detail`           | Show a module's detail text as a notification (the tooltip fallback).                           | `text` (string, required, max 1024 bytes) | None (click target) |
+| `bitty-terminal.bar:bluetooth-toggle` | Flip Bluetooth radio power through `bluetooth.control`; degrades to a notification when denied. | None                                      | None (click target) |
+| `bitty-terminal.bar:backlight-step`   | Step backlight brightness by `delta` percent points through `backlight.control`.                | `delta` (number, required, `-100..100`)   | None (click target) |
+| `bitty-terminal.bar:idle-toggle`      | Flip idle inhibition through `idle.control`; degrades to a notification when denied.            | None                                      | None (click target) |
+| `bitty-terminal.bar:audio-toggle`     | Toggle mute on the default sink through `audio.control`.                                        | None                                      | None (click target) |
+| `bitty-terminal.bar:audio-step`       | Step the default sink volume; `delta` is a host-computed signed line count.                     | `delta` (number, required)                | None (wheel target) |
+
+All commands are also invocable from the command palette. Clicks and wheel
+steps dispatch registered commands only; there is no shell-string path.
+
+## Configuration
+
+Settings are declared in `bitty-plugin.toml` `[settings]` and resolved from
+`$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua`. Every key is
+user-owned; the plugin never writes settings.
+
+| Key              | Type         | Default          | Description                                                                                                                        | Applies         |
+| ---------------- | ------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `show`           | boolean      | `true`           | Mount and paint the bar.                                                                                                           | Next activation |
+| `edge`           | string       | `"bottom"`       | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                       | Next activation |
+| `show_single`    | boolean      | `false`          | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Next activation |
+| `name_max_chars` | integer      | `32`             | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Next activation |
+| `label`          | string       | `"index"`        | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Next activation |
+| `modules_left`   | string array | `["workspaces"]` | Ordered module names for the left group.                                                                                           | Next activation |
+| `modules_center` | string array | `["clock"]`      | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Next activation |
+| `modules_right`  | string array | `[]`             | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Next activation |
+| `workspaces`     | string array | `[]`             | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Next activation |
+| `clock`          | string array | `[]`             | Per-module option collection for `clock`; same string-array limit as above.                                                        | Next activation |
+| `network`        | string array | `[]`             | Per-module option collection for `network`; same string-array limit as above.                                                      | Next activation |
+| `bluetooth`      | string array | `[]`             | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Next activation |
+| `backlight`      | string array | `[]`             | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Next activation |
+| `idle`           | string array | `[]`             | Per-module option collection for `idle`; same string-array limit as above.                                                         | Next activation |
+| `pulseaudio`     | string array | `[]`             | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Next activation |
+| `spectrum`       | string array | `[]`             | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Next activation |
+| `cpu`            | string array | `[]`             | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Next activation |
+| `memory`         | string array | `[]`             | Per-module option collection for `memory`; same string-array limit as above.                                                       | Next activation |
+| `battery`        | string array | `[]`             | Per-module option collection for `battery`; same string-array limit as above.                                                      | Next activation |
+
+```lua
+-- $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
+return {
+  show = true,
+  edge = "bottom",
+  show_single = false,
+  label = "index",
+  modules_left = { "workspaces" },
+  modules_center = { "clock", "cpu", "memory", "battery" },
+  modules_right = { "network", "pulseaudio" },
+}
+```
+
+The host resolves plugin settings at activation and pins them to that
+generation; `config.reloaded` re-renders with the pinned values, so edit the
+file and reopen Bitty to apply a change. `edge` can only change on a new
+activation because `bitty.ui.mount` is valid only during activation and v1 has
+no unmount or move.
+
+## Keybindings
+
+The plugin installs no keyboard bindings. Clicks bind the workspace `focus`
+command and the module control commands; wheel steps bind `audio-step`. To run
+a command from the keyboard, add a user mapping in
+`$XDG_CONFIG_HOME/bitty/init.lua`; user mappings keep precedence:
+
+```lua
+return {
+  keymaps = {
+    {
+      chord = "ctrl+alt+b",
+      action = "bitty-terminal.bar:focus",
+      context = "global",
+    },
+  },
+}
+```
+
+`focus` requires an `id` argument, so a bare keymap entry cannot choose a
+workspace; bind other bar commands or use the click targets.
+
+## Troubleshooting
+
+| Symptom / error                          | Meaning                                                                                                                                                                               | What to do                                                                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `E_INCOMPATIBLE`                         | The host application or Plugin API version is outside `[compat]`; activation is disabled with no partial mount.                                                                       | Upgrade Bitty or install a bar revision whose ranges admit your host. Do not edit the manifest ranges.                                                             |
+| `E_SETTINGS_UNDECLARED`                  | The entry point read a settings key absent from `[settings]`. This is a plugin defect.                                                                                                | Every read key is declared; if it still appears, report it with `bitty plugin info bitty-terminal.bar` and run `bitty --safe` meanwhile.                           |
+| Capability denied                        | `E_CAPABILITY_DENIED` (class `runtime`): `ui.rich` hides the band, `workspace.read` empties it, `workspace.control` makes clicks no-ops, `platform.notify` drops the detail fallback. | Reinstall and approve the grants, or inspect granted versus requested capabilities with `bitty plugin list`. A missing sensor/device grant only hides that module. |
+| Control click notifies instead of acting | The control head is ungranted or the call was denied (`E_NOT_PERMITTED`); the click degrades to one notification by design.                                                           | Grant the matching `*.control` capability at install/consent time, or keep the read-only render.                                                                   |
+| Bar is missing                           | `show = false`, a lone workspace with `show_single = false` and no occupied scratchpad, or lazy activation before the first workspace event.                                          | Check the settings file and `bitty plugin list`; open or focus a workspace to trigger the first render.                                                            |
+| Two bars                                 | Core still draws `workspace.show_bar` while the plugin paints its band.                                                                                                               | Set `workspace.show_bar = false` in the main configuration.                                                                                                        |
+| `E_SPAWN_FAILED`                         | Not applicable: this plugin spawns no process and opens no socket.                                                                                                                    | —                                                                                                                                                                  |
 
 ## Workspace bar
 
@@ -34,31 +159,8 @@ the retired Core workspaceline drew, over the Plugin API v1 surface only.
   separators, scratchpad indicator, unknown or stale ids, and non-integer ids
   queue nothing.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
-  event and re-reads settings on `config.reloaded`.
-
-### Settings
-
-Keys live under the plugin namespace (`plugins."bitty-terminal.bar"`); absent
-or invalid values fall back to the default.
-
-| Key              | Type    | Default          | Replaces (retired Core key) | Notes                                   |
-| ---------------- | ------- | ---------------- | --------------------------- | --------------------------------------- |
-| `show`           | boolean | `true`           | `workspace.show_bar`        | Live on `config.reloaded`.              |
-| `edge`           | string  | `"bottom"`       | `workspace.bar.edge`        | `"top"` or `"bottom"`; next generation. |
-| `show_single`    | boolean | `false`          | none (Core always hid it)   | Live on `config.reloaded`.              |
-| `name_max_chars` | integer | `32`             | none (Core fixed at 32)     | `1..32`; live on `config.reloaded`.     |
-| `label`          | string  | `"index"`        | none                        | `"index"`, `"name"`, or `"both"`; live. |
-| `modules_left`   | array   | `["workspaces"]` | none                        | Ordered module names; live.             |
-| `modules_center` | array   | `["clock"]`      | none                        | Rendered after left; live.              |
-| `modules_right`  | array   | `[]`             | none                        | Rendered after center; live.            |
-
-An unknown or non-string `label` value falls back to `index` (the bar still
-paints) and reports one bounded notification through the already-requested
-`platform.notify` grant; an ungranted notify surface drops the report without
-affecting the bar. `name_max_chars` only applies in `name` and `both` modes.
-
-`edge` applies on the next plugin generation because `bitty.ui.mount` is valid
-only during activation and v1 has no unmount or move.
+  event and re-renders on `config.reloaded`; settings themselves are pinned to
+  the activation generation.
 
 ### Modules (declarative)
 
