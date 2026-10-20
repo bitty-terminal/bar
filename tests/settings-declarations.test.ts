@@ -6,15 +6,19 @@
  * before `bitty.ui.mount` and the workspace bar never appears.
  *
  * The fix declares every read key in the manifest. This suite keeps it fixed
- * three ways: the declarations must match exactly the key set the entry point
- * reads, their kinds and shipped defaults must match the Lua fallbacks, and
+ * four ways: the declarations must match exactly the key set the entry point
+ * reads, their kinds and shipped defaults must match the Lua fallbacks,
  * activation must succeed both with an empty settings file (defaults in
- * force) and with explicit user values.
+ * force) and with explicit user values, and the README configuration table
+ * must document exactly the declared keys with those types and defaults.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
 import { LuaFactory } from "wasmoon";
+
+import { checkReadmeSettings } from "../scripts/check-readme-settings.mjs";
 
 import {
   activateBar,
@@ -25,6 +29,8 @@ import {
   ws,
   type BarRun,
 } from "./harness.js";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 interface SettingDeclaration {
   readonly kind: string;
@@ -135,6 +141,10 @@ describe("bar#21 settings declarations match the entry point", () => {
   test("every bitty.settings.get key is declared and nothing extra is", () => {
     expect(READ_KEYS.length).toBeGreaterThan(0);
     expect([...DECLARED.keys()].sort()).toEqual([...new Set(READ_KEYS)].sort());
+  });
+
+  test("the README configuration table matches the manifest", () => {
+    expect(checkReadmeSettings({ root: REPO_ROOT })).toEqual([]);
   });
 
   test("declared kinds and defaults match the plugin fallbacks", () => {
