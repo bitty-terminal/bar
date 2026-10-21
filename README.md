@@ -233,7 +233,10 @@ cadence:
   sink detail, and the wheel steps the volume through `audio.control@1.0.0`
   (bounded ±10 steps, 10 Hz coalesced host-side). Read-only text when the
   control head is ungranted; hidden when the state monitor is absent (fail
-  closed).
+  closed). The host samples the state read off the plugin thread
+  (bitty#2425), so the module stays hidden until the first sample lands (at
+  most one cadence after startup) instead of blocking plugin activation; a
+  hidden module is the same fail-closed posture, never a fabricated zero.
 - `microphone` (timer module, Phase B provider module): source (microphone)
   level and mute from the optional `source_volume_pct` / `source_muted` fields
   of the same `audio.state@1.0.0` snapshot, so no new capability is requested.
