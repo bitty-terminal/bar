@@ -21,7 +21,11 @@ license = "MIT"
 # before activation and fails closed (disable with a diagnostic, no partial
 # activation) on mismatch.
 # The declared compatibility floor for the 0.0.24 release train is
-# `>=0.0.24,<0.1`.
+# `>=0.0.24,<0.1`. Left-click and wheel routing work on that floor; the
+# right/middle per-region dispatch needs Core #2248 (Bitty 0.0.26). Older
+# hosts ignore the `region` binding key, so the bar degrades to left-only
+# dispatch instead of failing the component; the floor stays 0.0.24 for that
+# graceful degradation.
 bitty = ">=0.0.24,<0.1"
 plugin-api = "^1.0"
 
@@ -32,6 +36,10 @@ plugin-api = "^1.0"
 # device octa (bitty#2012/#2017/#2020) at `M.DEVICE_VERSION_REQ`; audio trio
 # (bitty#2009/#2013) at `M.AUDIO_VERSION_REQ`. Quoted dotted keys are single
 # interface names (the linter walks them back to dotted form).
+# `network.control` is deliberately absent: the network right-click radio
+# toggle is a forward-looking stub (no provider ships in 0.0.26 and only the
+# mock harness exercises it), so a real provider must declare its service and
+# capability first.
 "system.cpu" = "^1.0"
 "system.memory" = "^1.0"
 "system.battery" = "^1.0"
@@ -146,15 +154,15 @@ battery = { type = "string-array", default = [] }
 
 [lazy]
 # Static triggers let the host register the plugin without creating a VM.
-# Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` is the
-# click target bound to every workspace capsule (left focus, wheel cycle,
-# middle/right detail); `detail` is the tooltip→notify fallback bound to a
-# module's detail text; the `bluetooth-toggle`, `backlight-step`, and
-# `idle-toggle` commands are the device-module control click targets (each
-# calls exactly one control method on its own control interface, never
-# anything else); `audio-toggle` mutes on left/middle and shows the sink
-# detail on right; `audio-step` steps the volume (pulseaudio wheel,
-# host-computed `delta`); `workspace-action`, `clock-action`,
+# Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` remains a
+# public command for direct invocation and keymaps; capsules bind
+# `workspace-action` (left focus, wheel cycle, middle/right detail). `detail`
+# is the tooltip→notify fallback bound to a module's detail text; the
+# `bluetooth-toggle`, `backlight-step`, and `idle-toggle` commands are the
+# device-module control click targets (each calls exactly one control method
+# on its own control interface, never anything else); `audio-toggle` mutes on
+# left/middle and shows the sink detail on right; `audio-step` steps the
+# volume (pulseaudio wheel, host-computed `delta`); `workspace-action`, `clock-action`,
 # `network-action`, `microphone-action`, and `microphone-step` are the
 # bar#30 per-button region targets. Every pointer target dispatches one of
 # these registered commands with the host-injected `button`/`region`/`delta`
