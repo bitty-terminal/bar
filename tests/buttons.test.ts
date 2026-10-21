@@ -104,6 +104,18 @@ describe("workspace buttons", () => {
       { kind: "focus_id", id: 9 },
     ]);
     expect(run.host.dispatchCommand(ACTION, { delta: 0 })).toBe(false);
+    expect(run.host.dispatchCommand(ACTION, { delta: 0.5 })).toBe(false);
+  });
+
+  test("the wheel follows the painted numeric id order, not input order", async () => {
+    const run = await bar({
+      workspaces: [ws(9, "logs"), ws(1, "ws1"), ws(4, "code", true)],
+    });
+    // Painted order is 1, 4*, 9: wheel-down moves from 4 to 9.
+    expect(run.host.dispatchCommand(ACTION, { delta: -1 })).toBe(true);
+    expect(run.host.drainWorkspaceRequests()).toEqual([
+      { kind: "focus_id", id: 9 },
+    ]);
   });
 
   test("every capsule exposes the item region and both bindings", async () => {

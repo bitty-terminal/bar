@@ -3399,18 +3399,30 @@ end
 
 -- Wheel target for the workspace strip: one step per dispatch (positive
 -- `delta` is wheel-up, which moves to the previous workspace; negative moves
--- to the next), wrapping at both ends. Nil when there is nothing to step to.
+-- to the next), wrapping at both ends. The row order matches the painted strip
+-- (stable numeric id order), and a sub-line tick is a no-op like the audio
+-- wheel. Nil when there is nothing to step to.
 function M.workspace_step_target(rows, delta)
   if type(delta) ~= "number" or delta ~= delta or delta == 0 then
+    return nil
+  end
+  if math.abs(delta) < 1 then
     return nil
   end
   local count = math.min(#rows, M.MAX_WORKSPACES)
   if count < 2 then
     return nil
   end
+  local ordered = {}
+  for index = 1, count do
+    ordered[index] = rows[index]
+  end
+  table.sort(ordered, function(a, b)
+    return a.id < b.id
+  end)
   local active = 1
   for index = 1, count do
-    if rows[index].active == true then
+    if ordered[index].active == true then
       active = index
       break
     end
@@ -3427,7 +3439,7 @@ function M.workspace_step_target(rows, delta)
       target = 1
     end
   end
-  return rows[target].id
+  return ordered[target].id
 end
 
 -- Host wiring. Skipped when the host table is absent so the pure functions
@@ -3449,16 +3461,20 @@ local function now_seconds()
 end
 
 -- Reports rejected `label` / `icons` values through the already-declared
--- platform.notify grant: best-effort, bounded, and deduplicated per distinct
--- diagnostic so a reload storm cannot spam the notify surface. An ungranted or
--- absent notify surface never breaks activation; the fallback setting still
--- paints (never a silent empty bar).
-local reported_diagnostics = {}
-local function report_setting_diagnostic(body)
-  if body == nil or reported_diagnostics[body] == true then
+-- platform.notify grant: best-effort, bounded, and deduplicated per setting so
+-- a reload storm cannot spam the notify surface or grow the dedup state. An
+-- ungranted or absent notify surface never breaks activation; the fallback
+-- setting still paints (never a silent empty bar).
+local reported_diagnostics = { label = nil, icons = nil }
+local function report_setting_diagnostic(key, body)
+  if body == nil then
+    reported_diagnostics[key] = nil
     return
   end
-  reported_diagnostics[body] = true
+  if body == reported_diagnostics[key] then
+    return
+  end
+  reported_diagnostics[key] = body
   if bitty.notify == nil or bitty.notify.show == nil then
     return
   end
@@ -3466,8 +3482,8 @@ local function report_setting_diagnostic(body)
 end
 
 local function report_diagnostics(settings)
-  report_setting_diagnostic(settings.label_diagnostic)
-  report_setting_diagnostic(settings.icons_diagnostic)
+  report_setting_diagnostic("label", settings.label_diagnostic)
+  report_setting_diagnostic("icons", settings.icons_diagnostic)
 end
 
 local opts = M.read_settings(settings_get)
