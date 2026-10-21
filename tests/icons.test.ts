@@ -136,6 +136,8 @@ describe("icon maps (pure)", () => {
 
   test("a malformed or over-long icon falls back to the ascii entry", async () => {
     expect(mod["valid_icon"]("x".repeat(25))).toBe(false);
+    expect(mod["icon_glyph"]("nerd", "missing_key")).toBe("");
+    expect(mod["icon_glyph"]("nerd", "network_wifi", 9)).toBe("");
     const fallback = await pureLua!.doString(
       [
         "local M = (function()",
@@ -403,6 +405,16 @@ describe("icons through activation", () => {
     const text = textOf(cpu.component());
     expect(text.startsWith(mod["ICON_SETS"].nerd.clock)).toBe(true);
     expect(text).toContain(`${mod["ICON_SETS"].nerd.cpu} 42%`);
+  });
+
+  test("icons = pua paints the legacy Font Awesome glyphs", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["clock"], icons: "pua" },
+    });
+    expect(textOf(run.component()).startsWith(mod["ICON_SETS"].pua.clock)).toBe(
+      true,
+    );
   });
 
   test("an unknown icons value paints ascii and reports one bounded diagnostic", async () => {
