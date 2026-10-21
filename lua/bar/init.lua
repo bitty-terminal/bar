@@ -771,13 +771,23 @@ function M.battery_glyph(name, capacity, state)
   if bucket == nil then
     return ""
   end
+  local set = name
+  if type(set) ~= "string" or M.ICON_SETS[set] == nil then
+    set = M.ICON_SET_DEFAULT
+  end
   if state == "full" then
-    return M.icon_glyph(name, "battery_full")
+    -- ASCII keeps the historical capacity bucket byte for byte (a full
+    -- battery at 100% already reads `[====]`); the opt-in maps use their
+    -- distinct full glyph.
+    if set == M.ICON_SET_DEFAULT then
+      return M.icon_glyph(set, "battery", bucket)
+    end
+    return M.icon_glyph(set, "battery_full")
   end
   if state == "charging" then
-    return M.icon_glyph(name, "battery_charging", bucket)
+    return M.icon_glyph(set, "battery_charging", bucket)
   end
-  return M.icon_glyph(name, "battery", bucket)
+  return M.icon_glyph(set, "battery", bucket)
 end
 
 

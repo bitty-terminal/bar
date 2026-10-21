@@ -280,6 +280,7 @@ describe("icon selection (pure)", () => {
     // ASCII keeps the historical ladder and the `+` charging mark.
     expect(mod["battery_glyph"]("ascii", 50, "discharging")).toBe("[==  ]");
     expect(mod["battery_glyph"]("ascii", 50, "charging")).toBe("[==  ]+");
+    expect(mod["battery_glyph"]("ascii", 50, "full")).toBe("[==  ]");
     expect(mod["battery_glyph"]("ascii", 100, "full")).toBe("[====]");
   });
 });
