@@ -67,19 +67,27 @@ M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
 M.ACTIVE_MARK = "*"
 M.OCCUPIED_MARK = "+"
 M.ATTENTION_MARK = "!"
-M.PILL_OPEN = "["
-M.PILL_CLOSE = "]"
+-- Capsule padding: one space on each side of the label, painted with the
+-- capsule background so the pill reads as a filled capsule instead of
+-- bracketed text. The padding belongs to the same atom, so the whole capsule
+-- (including its padding) stays one click target. Core's v1 band has no
+-- corner-radius primitive, so square padded capsules are the shipped form.
+M.CAPSULE_PAD = " "
 M.SEPARATOR = " "
 -- Fail-closed placeholder for an empty workspace list (U+2014 EM DASH).
 M.EMPTY_PLACEHOLDER = "\226\128\148"
--- Theme token for the active pill; host-resolved, never a raw color.
-M.ACTIVE_FG = "accent"
+-- Theme tokens for the capsules; host-resolved, never raw colors. The active
+-- capsule takes the accent fill; inactive capsules take the subtle selection
+-- surface (one step above the background) and the default foreground text.
+M.ACTIVE_FG = "background"
+M.ACTIVE_BG = "accent"
+M.INACTIVE_BG = "selection"
 
 -- Accepted bar edges and the band slot each one mounts into.
 M.EDGE_SLOTS = { top = "top", bottom = "bottom" }
 
 -- Workspace capsule label modes (`label` setting). `index` is the default: the
--- stable workspace seq alone (`[1] [2*]`), the least noisy form. `name` shows
+-- stable workspace seq alone (`" 1   2* "`), the least noisy form. `name` shows
 -- the truncated workspace name, `both` keeps the historical `id:name` form.
 -- Active/occupied/attention marks ride after the label in every mode.
 M.LABELS = { index = true, name = true, both = true }
@@ -96,12 +104,15 @@ M.LABEL_DIAGNOSTIC_SUFFIX = "; using 'index'."
 -- Spacer/flex node (Phase C), so the groups keep their declarative order.
 M.MODULE_GROUPS = { "modules_left", "modules_center", "modules_right" }
 -- Shipped default plan (fresh install): workspace capsules on the left, the
--- clock in the center group, and an empty right group. Mirrors the manifest
--- `[settings]` defaults; a user opts out of any group by setting it to [].
+-- clock in the center group, and the system indicators on the right. Provider
+-- modules hide fail closed when their broker provider is absent or ungranted,
+-- so a host without sensors/network paints only the capsules and clock; a
+-- user opts out of any group by setting it to [] (or removes one module from
+-- its group list).
 M.DEFAULT_MODULE_PLAN = {
   modules_left = { "workspaces" },
   modules_center = { "clock" },
-  modules_right = {},
+  modules_right = { "network", "cpu", "memory", "battery" },
 }
 -- Modules are joined by a single space when more than one renders.
 M.MODULE_GAP = " "
@@ -544,14 +555,14 @@ function M.visible(rows, opts)
   return M.scratchpad_state(rows).occupied
 end
 
--- Ordered bar segments before the byte bound: one capsule per workspace
--- (`[label]` plus state marks) and single-space separators. The label follows
--- `opts.label` (`index` by default: the stable seq alone, so a two-workspace
--- bar paints `[1] [2*]`). The id stays the stable workspace seq from
--- `bitty.workspace.list()` (Core `workspaceline_tokens` renders `slot.seq`),
--- so closing a workspace never renumbers the survivors. The scratchpad
--- indicator remains available after the capsule list when the slot is
--- occupied.
+-- Ordered bar segments before the byte bound: one padded capsule per
+-- workspace (label plus state marks on a filled background) and single-space
+-- separators. The label follows `opts.label` (`index` by default: the stable
+-- seq alone, so a two-workspace bar paints ` 1   2* `). The id stays the
+-- stable workspace seq from `bitty.workspace.list()` (Core
+-- `workspaceline_tokens` renders `slot.seq`), so closing a workspace never
+-- renumbers the survivors. The scratchpad indicator remains available after
+-- the capsule list when the slot is occupied.
 function M.segments(rows, opts)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
@@ -594,7 +605,7 @@ function M.segments(rows, opts)
     end
     out[#out + 1] = {
       kind = "pill",
-      text = M.PILL_OPEN .. label .. M.PILL_CLOSE,
+      text = M.CAPSULE_PAD .. label .. M.CAPSULE_PAD,
       id = row.id,
       active = row.active == true,
       occupied = type(row.panel_count) == "number" and row.panel_count > 0,
@@ -619,12 +630,15 @@ local function segment_atom(segment)
   if segment.kind == "pill" then
     if segment.active then
       atom.bold = true
-      atom.fg = "background"
-      atom.bg = "accent"
-    elseif segment.attention then
-      atom.fg = "cursor"
-    elseif segment.occupied then
-      atom.bold = true
+      atom.fg = M.ACTIVE_FG
+      atom.bg = M.ACTIVE_BG
+    else
+      atom.bg = M.INACTIVE_BG
+      if segment.attention then
+        atom.fg = "cursor"
+      elseif segment.occupied then
+        atom.bold = true
+      end
     end
     if not segment.active then
       atom.on_click = M.click_binding(M.FOCUS_COMMAND, { id = segment.id })

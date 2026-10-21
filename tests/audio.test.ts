@@ -41,18 +41,19 @@ const THREE: WorkspaceInfo[] = [
 const runs: BarRun[] = [];
 
 /**
- * These tests pin the workspace-only center (`modules_center: []`) so the
+ * These tests pin a workspace-only plan (`modules_center: []`,
+ * `modules_right: []`) so the
  * audio assertions stay focused on their module; the shipped default plan
  * (workspaces left, clock center) is covered in modules.test.ts.
  */
-const NO_CENTER = { modules_center: [] } as const;
+const WORKSPACE_ONLY = { modules_center: [], modules_right: [] } as const;
 
 async function bar(
   options: Parameters<typeof activateBar>[0] = {},
 ): Promise<BarRun> {
   const run = await activateBar({
     ...options,
-    settings: { ...NO_CENTER, ...options.settings },
+    settings: { ...WORKSPACE_ONLY, ...options.settings },
   });
   runs.push(run);
   return run;
@@ -329,7 +330,7 @@ describe("pulseaudio module render (broker stubs)", () => {
       workspaces: THREE,
       settings: { modules_left: ["pulseaudio", "workspaces"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
   });
 
   test("read-only render carries no click or scroll binding without the control head", async () => {
@@ -419,7 +420,7 @@ describe("spectrum cava-lite meter (broker stubs)", () => {
       workspaces: THREE,
       settings: { modules_left: ["spectrum", "workspaces"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
   });
 
   test("bucket counts above 32 fall back to the default", async () => {

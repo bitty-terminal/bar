@@ -51,18 +51,19 @@ const SENSOR_GRANTS: readonly string[] = [
 const runs: BarRun[] = [];
 
 /**
- * These tests pin the workspace-only center (`modules_center: []`) so the
+ * These tests pin a workspace-only plan (`modules_center: []`,
+ * `modules_right: []`) so the
  * sensor assertions stay focused on their module; the shipped default plan
  * (workspaces left, clock center) is covered in modules.test.ts.
  */
-const NO_CENTER = { modules_center: [] } as const;
+const WORKSPACE_ONLY = { modules_center: [], modules_right: [] } as const;
 
 async function bar(
   options: Parameters<typeof activateBar>[0] = {},
 ): Promise<BarRun> {
   const run = await activateBar({
     ...options,
-    settings: { ...NO_CENTER, ...options.settings },
+    settings: { ...WORKSPACE_ONLY, ...options.settings },
   });
   runs.push(run);
   return run;
@@ -234,7 +235,7 @@ describe("cpu module", () => {
       grants: SENSOR_GRANTS,
       services: { [CPU]: { snapshot: CPU_SNAP } },
     });
-    expect(painted(run)).toBe("42% [1] [4*] [9]");
+    expect(painted(run)).toBe("42%  1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -314,7 +315,7 @@ describe("cpu module", () => {
       settings: { modules_left: ["cpu", "workspaces"] },
       grants: SENSOR_GRANTS,
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -342,7 +343,7 @@ describe("cpu module", () => {
         grants: SENSOR_GRANTS,
         services,
       });
-      expect(painted(run)).toBe("[1] [4*] [9]");
+      expect(painted(run)).toBe(" 1   4*   9 ");
       expect(run.host.handlerViolations).toEqual([]);
     }
   });
@@ -393,10 +394,10 @@ describe("cpu module", () => {
         },
       },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
     run.host.advanceTimers(2000);
     expect(run.updates()).toBe(1);
-    expect(painted(run)).toBe("42% [1] [4*] [9]");
+    expect(painted(run)).toBe("42%  1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -466,7 +467,7 @@ describe("memory module", () => {
       settings: { modules_left: ["memory", "workspaces"] },
       grants: SENSOR_GRANTS,
     });
-    expect(painted(absent)).toBe("[1] [4*] [9]");
+    expect(painted(absent)).toBe(" 1   4*   9 ");
     expect(absent.host.handlerViolations).toEqual([]);
   });
 });
@@ -597,7 +598,7 @@ describe("battery module", () => {
         grants: SENSOR_GRANTS,
         services,
       });
-      expect(painted(run)).toBe("[1] [4*] [9]");
+      expect(painted(run)).toBe(" 1   4*   9 ");
       expect(run.host.handlerViolations).toEqual([]);
     }
   });
