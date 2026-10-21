@@ -44,6 +44,15 @@ local BACKLIGHT_STEP_COMMAND_ID = "backlight-step"
 local IDLE_TOGGLE_COMMAND_ID = "idle-toggle"
 local AUDIO_TOGGLE_COMMAND_ID = "audio-toggle"
 local AUDIO_STEP_COMMAND_ID = "audio-step"
+-- Per-module pointer actions (bar#30): one registered command per module
+-- receives the host-injected `button` (`left`/`right`/`middle`) and the
+-- host-computed scroll `delta`, so a single binding can serve every pointer
+-- gesture without shell strings or extra Core vehicles.
+local WORKSPACE_ACTION_COMMAND_ID = "workspace-action"
+local CLOCK_ACTION_COMMAND_ID = "clock-action"
+local NETWORK_ACTION_COMMAND_ID = "network-action"
+local MICROPHONE_ACTION_COMMAND_ID = "microphone-action"
+local MICROPHONE_STEP_COMMAND_ID = "microphone-step"
 M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
 -- Tooltip-without-command fallback: the click shows the module's detail text
 -- as a notification (`bitty.notify.show`) because v1 has no tooltip vehicle.
@@ -57,6 +66,11 @@ M.IDLE_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. IDLE_TOGGLE_COMMAND_ID
 -- volume. Both dispatch registered commands only and never shell out.
 M.AUDIO_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. AUDIO_TOGGLE_COMMAND_ID
 M.AUDIO_STEP_COMMAND = PLUGIN_ID .. ":" .. AUDIO_STEP_COMMAND_ID
+M.WORKSPACE_ACTION_COMMAND = PLUGIN_ID .. ":" .. WORKSPACE_ACTION_COMMAND_ID
+M.CLOCK_ACTION_COMMAND = PLUGIN_ID .. ":" .. CLOCK_ACTION_COMMAND_ID
+M.NETWORK_ACTION_COMMAND = PLUGIN_ID .. ":" .. NETWORK_ACTION_COMMAND_ID
+M.MICROPHONE_ACTION_COMMAND = PLUGIN_ID .. ":" .. MICROPHONE_ACTION_COMMAND_ID
+M.MICROPHONE_STEP_COMMAND = PLUGIN_ID .. ":" .. MICROPHONE_STEP_COMMAND_ID
 
 -- Bounds mirrored from the retired Core workspaceline so the retirement is
 -- behavior-preserving (bitty@55f9d336 `crates/bitty-runtime/src/runtime/workspaces.rs`).
@@ -98,6 +112,8 @@ M.LABEL_DEFAULT = "index"
 M.LABEL_DIAGNOSTIC_MAX_CHARS = 32
 M.LABEL_DIAGNOSTIC_PREFIX = "Unified Bar: unknown label "
 M.LABEL_DIAGNOSTIC_SUFFIX = "; using 'index'."
+M.ICONS_DIAGNOSTIC_PREFIX = "Unified Bar: unknown icons "
+M.ICONS_DIAGNOSTIC_SUFFIX = "; using 'ascii'."
 
 -- Module-group settings keys (Waybar `modules-*`). Phase A renders left, then
 -- center, then right into one inset row: a true center/right alignment needs a
@@ -174,8 +190,10 @@ M.BATTERY_CRITICAL_DEFAULT = 15
 M.CPU_DEFAULT_FORMAT = "{total}%"
 M.MEMORY_DEFAULT_FORMAT = "{pct}%"
 M.BATTERY_DEFAULT_FORMAT = "{icon} {capacity}%"
--- Battery icon buckets (ASCII only, five levels by capacity). The charging
--- mark is appended while charging; level and alarm selection stay in Lua.
+-- Battery icon buckets (the ASCII ladder, five levels by capacity). The
+-- legacy charging mark stays exported for compatibility; the shipped ASCII
+-- charging ladder bakes it into each rung (`M.ICON_SETS.ascii`), and the
+-- opt-in PUA/Nerd sets carry native charging glyphs.
 M.BATTERY_ICONS = { "[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]" }
 M.BATTERY_CHARGING_MARK = "+"
 -- Template renderer cap (bytes) for a bounded `{key}` substitution.
@@ -247,17 +265,174 @@ M.SPECTRUM_FALLOFF = 0.15
 M.SPECTRUM_PEAK_DECAY = 0.05
 M.SPECTRUM_PEAK_HOLD_TICKS = 4
 
+-- Icon maps (bar#24 extension, bar#30): opt-in glyph sets for the modules
+-- that carry a symbol. `ascii` is the shipped default and reproduces the
+-- existing output byte for byte: every entry is either the historical ASCII
+-- token (`MUTE`/`LO`/`MED`/`HI`, the battery buckets) or empty, in which case
+-- the module composes no icon and its text is unchanged. `pua` uses the
+-- legacy Font Awesome private-use block (broadly present in patched fonts)
+-- and `nerd` uses Nerd Fonts v3 Material Design glyphs. Every glyph is a
+-- byte escape (no `utf8` library; the file stays in the Lua 5.1 grammar).
+--
+-- Width policy: PUA glyphs are declared one display cell wide (the Nerd
+-- Fonts convention), and `M.display_cells` counts UTF-8 code points with an
+-- East-Asian-width approximation rather than bytes. A terminal without the
+-- font paints its replacement box in the same one-cell slot, so a missing
+-- glyph never shifts the columns that follow. A malformed or over-long icon
+-- string falls back to the ASCII entry (`M.icon_glyph`), so column math stays
+-- defined even for a bad map.
+M.ICON_SET_DEFAULT = "ascii"
+M.ICON_MAX_BYTES = 24
+M.MODULE_TEXT_MAX_CELLS = 256
+M.ICON_SETS = {
+  ascii = {
+    clock = "",
+    network_wifi = { "", "", "", "" },
+    network_ethernet = "",
+    network_disconnected = "",
+    network_disabled = "",
+    bluetooth_on = "",
+    bluetooth_off = "",
+    bluetooth_connected = "",
+    audio_muted = M.AUDIO_ICON_MUTED,
+    audio_low = M.AUDIO_ICON_LOW,
+    audio_medium = M.AUDIO_ICON_MED,
+    audio_high = M.AUDIO_ICON_HIGH,
+    audio_speaker = "",
+    audio_headphones = "",
+    audio_headset = "",
+    audio_hdmi = "",
+    audio_usb = "",
+    audio_bluetooth = "",
+    microphone_on = "mic",
+    microphone_muted = "mic:mute",
+    cpu = "",
+    memory = "",
+    battery = M.BATTERY_ICONS,
+    battery_charging = {
+      "[    ]+",
+      "[=   ]+",
+      "[==  ]+",
+      "[=== ]+",
+      "[====]+",
+    },
+    battery_full = "[====]",
+  },
+  -- Legacy Font Awesome PUA subset (U+E000-U+F8FF). Kept to glyphs that
+  -- ship in the classic Nerd Fonts patches so older patched fonts render it.
+  pua = {
+    clock = "\239\128\151", -- nf-fa-clock_o (U+F017)
+    network_wifi = {
+      "\239\135\171", -- nf-fa-wifi (U+F1EB), the only FA rung
+      "\239\135\171",
+      "\239\135\171",
+      "\239\135\171",
+    },
+    network_ethernet = "\238\189\132", -- nf-fa-ethernet (U+EF44)
+    network_disconnected = "\239\132\167", -- nf-fa-chain_broken (U+F127)
+    network_disabled = "\239\129\158", -- nf-fa-ban (U+F05E)
+    bluetooth_on = "\239\138\147", -- nf-fa-bluetooth (U+F293)
+    bluetooth_off = "\239\128\145", -- nf-fa-power_off (U+F011)
+    bluetooth_connected = "\239\138\148", -- nf-fa-bluetooth_b (U+F294)
+    audio_muted = "\239\128\166", -- nf-fa-volume_off (U+F026)
+    audio_low = "\239\128\167", -- nf-fa-volume_down (U+F027)
+    audio_medium = "\239\128\167",
+    audio_high = "\239\128\168", -- nf-fa-volume_up (U+F028)
+    audio_speaker = "\239\128\168",
+    audio_headphones = "\239\128\165", -- nf-fa-headphones (U+F025)
+    audio_headset = "\238\185\153", -- nf-fa-headset (U+EE59)
+    audio_hdmi = "\239\132\136", -- nf-fa-desktop (U+F108)
+    audio_usb = "\239\138\135", -- nf-fa-usb (U+F287)
+    audio_bluetooth = "\239\138\147", -- nf-fa-bluetooth (U+F293)
+    microphone_on = "\239\132\176", -- nf-fa-microphone (U+F130)
+    microphone_muted = "\239\132\177", -- nf-fa-microphone_slash (U+F131)
+    cpu = "\239\139\155", -- nf-fa-microchip (U+F2DB)
+    memory = "\238\191\133", -- nf-fa-memory (U+EFC5)
+    battery = {
+      "\239\137\132", -- nf-fa-battery_0 (U+F244)
+      "\239\137\131", -- nf-fa-battery_1 (U+F243)
+      "\239\137\130", -- nf-fa-battery_2 (U+F242)
+      "\239\137\129", -- nf-fa-battery_3 (U+F241)
+      "\239\137\128", -- nf-fa-battery_4 (U+F240)
+    },
+    -- Font Awesome has no charging-battery glyph, so each rung is the
+    -- capacity glyph plus the bolt (two cells, by design).
+    battery_charging = {
+      "\239\137\132\239\131\167", -- battery_0 + bolt (U+F0E7)
+      "\239\137\131\239\131\167",
+      "\239\137\130\239\131\167",
+      "\239\137\129\239\131\167",
+      "\239\137\128\239\131\167",
+    },
+    battery_full = "\239\137\128", -- nf-fa-battery_4 (U+F240)
+  },
+  -- Nerd Fonts v3 Material Design set.
+  nerd = {
+    clock = "\243\176\165\148", -- nf-md-clock (U+F0954)
+    network_wifi = {
+      "\243\176\164\159", -- nf-md-wifi_strength_1 (U+F091F)
+      "\243\176\164\162", -- nf-md-wifi_strength_2 (U+F0922)
+      "\243\176\164\165", -- nf-md-wifi_strength_3 (U+F0925)
+      "\243\176\164\168", -- nf-md-wifi_strength_4 (U+F0928)
+    },
+    network_ethernet = "\243\176\136\128", -- nf-md-ethernet (U+F0200)
+    network_disconnected = "\243\176\140\153", -- nf-md-lan_disconnect (U+F0319)
+    network_disabled = "\243\176\150\170", -- nf-md-wifi_off (U+F05AA)
+    bluetooth_on = "\243\176\130\175", -- nf-md-bluetooth (U+F00AF)
+    bluetooth_off = "\243\176\130\178", -- nf-md-bluetooth_off (U+F00B2)
+    bluetooth_connected = "\243\176\130\177", -- nf-md-bluetooth_connect (U+F00B1)
+    audio_muted = "\243\176\150\129", -- nf-md-volume_off (U+F0581)
+    audio_low = "\243\176\149\191", -- nf-md-volume_low (U+F057F)
+    audio_medium = "\243\176\150\128", -- nf-md-volume_medium (U+F0580)
+    audio_high = "\243\176\149\190", -- nf-md-volume_high (U+F057E)
+    audio_speaker = "\243\176\147\131", -- nf-md-speaker (U+F04C3)
+    audio_headphones = "\243\176\139\139", -- nf-md-headphones (U+F02CB)
+    audio_headset = "\243\176\139\142", -- nf-md-headset (U+F02CE)
+    audio_hdmi = "\243\176\141\185", -- nf-md-monitor (U+F0379)
+    audio_usb = "\243\176\149\147", -- nf-md-usb (U+F0553)
+    audio_bluetooth = "\243\176\130\176", -- nf-md-bluetooth_audio (U+F00B0)
+    microphone_on = "\243\176\141\172", -- nf-md-microphone (U+F036C)
+    microphone_muted = "\243\176\141\173", -- nf-md-microphone_off (U+F036D)
+    cpu = "\243\176\152\154", -- nf-md-chip (U+F061A)
+    memory = "\243\176\141\155", -- nf-md-memory (U+F035B)
+    battery = {
+      "\243\176\129\186", -- nf-md-battery_10 (U+F007A)
+      "\243\176\129\188", -- nf-md-battery_30 (U+F007C)
+      "\243\176\129\190", -- nf-md-battery_50 (U+F007E)
+      "\243\176\130\128", -- nf-md-battery_70 (U+F0080)
+      "\243\176\129\185", -- nf-md-battery (U+F0079)
+    },
+    battery_charging = {
+      "\243\176\162\156", -- nf-md-battery_charging_10 (U+F089C)
+      "\243\176\130\135", -- nf-md-battery_charging_30 (U+F0087)
+      "\243\176\162\157", -- nf-md-battery_charging_50 (U+F089D)
+      "\243\176\162\158", -- nf-md-battery_charging_70 (U+F089E)
+      "\243\176\130\133", -- nf-md-battery_charging_100 (U+F0085)
+    },
+    battery_full = "\243\176\129\185", -- nf-md-battery (U+F0079)
+  },
+}
+
+-- Microphone module defaults: the `audio.state` snapshot already carries the
+-- optional source (microphone) read fields (`source_volume_pct` /
+-- `source_muted`), so the module needs no new provider capability. The live
+-- reader serves both as nil in this revision (no scoped `@DEFAULT_SOURCE@`
+-- argv), so the module hides fail closed until the provider reports them.
+M.MICROPHONE_DEFAULT_FORMAT = "{icon} {volume}%"
+M.MICROPHONE_TICK_MS = 2000
+
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
 -- `workspace.bar.edge`; `show_single` opts into a lone-workspace bar, which
 -- Core always hid. `name_max_chars` keeps the Core pill-name bound and
--- `label` selects the capsule label mode.
+-- `label` selects the capsule label mode; `icons` selects the icon map.
 M.DEFAULTS = {
   show = true,
   edge = "bottom",
   show_single = false,
   name_max_chars = M.NAME_MAX_CHARS,
   label = M.LABEL_DEFAULT,
+  icons = M.ICON_SET_DEFAULT,
 }
 
 -- A band whose text is empty is not painted by the host.
@@ -347,6 +522,275 @@ function M.truncate_bytes(text, max_bytes)
   return string.sub(text, 1, cut)
 end
 
+-- Decodes one UTF-8 sequence starting at byte `i`. Returns the code point
+-- (or nil for a malformed lead/continuation byte) and the sequence length.
+-- A malformed byte reads as a one-byte, one-cell character so a hostile or
+-- damaged string can never desynchronize the display-cell walk.
+local function utf8_at(text, i)
+  local b1 = string.byte(text, i)
+  if b1 == nil then
+    return nil, 0
+  end
+  if b1 < 0x80 then
+    return b1, 1
+  end
+  local need, cp
+  if b1 >= 0xC2 and b1 <= 0xDF then
+    need, cp = 1, b1 - 0xC0
+  elseif b1 >= 0xE0 and b1 <= 0xEF then
+    need, cp = 2, b1 - 0xE0
+  elseif b1 >= 0xF0 and b1 <= 0xF4 then
+    need, cp = 3, b1 - 0xF0
+  else
+    return nil, 1
+  end
+  for offset = 1, need do
+    local byte = string.byte(text, i + offset)
+    if byte == nil or byte < 0x80 or byte > 0xBF then
+      return nil, 1
+    end
+    cp = cp * 0x40 + (byte - 0x80)
+  end
+  return cp, need + 1
+end
+
+-- Whether `text` is a well-formed UTF-8 string (bounded by the caller).
+function M.utf8_valid(text)
+  if type(text) ~= "string" then
+    return false
+  end
+  local i = 1
+  local n = #text
+  while i <= n do
+    local cp, len = utf8_at(text, i)
+    if cp == nil or len < 1 then
+      return false
+    end
+    i = i + len
+  end
+  return true
+end
+
+-- Display cells for one code point (East-Asian-width approximation). The
+-- closed set that matters here: combining marks and joiners take 0 cells,
+-- wide/fullwidth CJK and emoji take 2, and everything else (including the
+-- Nerd Font private-use block) takes 1. A private-use glyph that the
+-- terminal cannot render still occupies its one declared cell, so column
+-- math stays stable with or without the font.
+local ZERO_WIDTH_RANGES = {
+  { 0x0300, 0x036F },
+  { 0x0483, 0x0489 },
+  { 0x0591, 0x05BD },
+  { 0x0610, 0x061A },
+  { 0x064B, 0x065F },
+  { 0x0670, 0x0670 },
+  { 0x06D6, 0x06DC },
+  { 0x0E31, 0x0E31 },
+  { 0x0E34, 0x0E3A },
+  { 0x0E47, 0x0E4E },
+  { 0x200B, 0x200F },
+  { 0x2060, 0x2064 },
+  { 0x20D0, 0x20FF },
+  { 0xFE00, 0xFE0F },
+  { 0xFE20, 0xFE2F },
+  { 0xFEFF, 0xFEFF },
+}
+local WIDE_RANGES = {
+  { 0x1100, 0x115F },
+  { 0x2329, 0x232A },
+  { 0x2E80, 0x303E },
+  { 0x3041, 0x33FF },
+  { 0x3400, 0x4DBF },
+  { 0x4E00, 0x9FFF },
+  { 0xA000, 0xA4CF },
+  { 0xA960, 0xA97F },
+  { 0xAC00, 0xD7A3 },
+  { 0xF900, 0xFAFF },
+  { 0xFE10, 0xFE19 },
+  { 0xFE30, 0xFE6F },
+  { 0xFF00, 0xFF60 },
+  { 0xFFE0, 0xFFE6 },
+  { 0x1F300, 0x1F64F },
+  { 0x1F680, 0x1F6FF },
+  { 0x1F900, 0x1F9FF },
+  { 0x20000, 0x3FFFD },
+}
+
+local function in_ranges(cp, ranges)
+  for _, range in ipairs(ranges) do
+    if cp >= range[1] and cp <= range[2] then
+      return true
+    end
+  end
+  return false
+end
+
+-- Display-cell width of one code point (0, 1, or 2).
+function M.codepoint_cells(cp)
+  if type(cp) ~= "number" or cp < 0 then
+    return 0
+  end
+  if in_ranges(cp, ZERO_WIDTH_RANGES) then
+    return 0
+  end
+  if in_ranges(cp, WIDE_RANGES) then
+    return 2
+  end
+  return 1
+end
+
+-- Display-cell width of a UTF-8 string. Malformed bytes count as one cell.
+function M.display_cells(text)
+  if type(text) ~= "string" then
+    return 0
+  end
+  local cells = 0
+  local i = 1
+  local n = #text
+  while i <= n do
+    local cp, len = utf8_at(text, i)
+    if cp == nil then
+      cells = cells + 1
+      i = i + math.max(len, 1)
+    else
+      cells = cells + M.codepoint_cells(cp)
+      i = i + len
+    end
+  end
+  return cells
+end
+
+-- Truncates `text` to at most `max_cells` display cells on a code-point
+-- boundary. A wide character that would cross the bound is dropped whole.
+function M.truncate_cells(text, max_cells)
+  if type(text) ~= "string" or not is_integer(max_cells) or max_cells < 0 then
+    return ""
+  end
+  local out = {}
+  local cells = 0
+  local i = 1
+  local n = #text
+  while i <= n do
+    local cp, len = utf8_at(text, i)
+    local width = cp == nil and 1 or M.codepoint_cells(cp)
+    if cells + width > max_cells then
+      break
+    end
+    out[#out + 1] = string.sub(text, i, i + math.max(len, 1) - 1)
+    cells = cells + width
+    i = i + math.max(len, 1)
+  end
+  return table.concat(out)
+end
+
+-- Icon set table for a setting value, or the shipped ASCII set for an
+-- absent/unknown value (fail closed: never a blank or partial map).
+function M.icon_set(name)
+  if type(name) == "string" then
+    local set = M.ICON_SETS[name]
+    if set ~= nil then
+      return set
+    end
+  end
+  return M.ICON_SETS[M.ICON_SET_DEFAULT]
+end
+
+-- One icon glyph from the selected set, or its ASCII fallback. An entry is
+-- usable only when it is a string within `M.ICON_MAX_BYTES` bytes and
+-- well-formed UTF-8; otherwise the ASCII entry (which may legitimately be
+-- empty) wins and the module composes no icon. `index` selects a ladder rung.
+function M.icon_glyph(name, key, index)
+  local set = M.icon_set(name)
+  local entry = set[key]
+  if index ~= nil then
+    if type(entry) ~= "table" then
+      entry = nil
+    else
+      entry = entry[index]
+    end
+  end
+  if not M.valid_icon(entry) then
+    entry = M.icon_set(M.ICON_SET_DEFAULT)[key]
+    if index ~= nil then
+      if type(entry) ~= "table" then
+        entry = nil
+      else
+        entry = entry[index]
+      end
+    end
+  end
+  if type(entry) ~= "string" then
+    return ""
+  end
+  return entry
+end
+
+-- Whether one map entry is safe to paint: a bounded, well-formed UTF-8
+-- string. An empty string is valid (it means "no icon").
+function M.valid_icon(icon)
+  if type(icon) ~= "string" then
+    return false
+  end
+  if #icon > M.ICON_MAX_BYTES then
+    return false
+  end
+  if icon == "" then
+    return true
+  end
+  return M.utf8_valid(icon)
+end
+
+-- Text with an icon prefix, joined by one space, bounded to
+-- `M.MODULE_TEXT_MAX_CELLS` display cells. An empty icon returns the text
+-- unchanged, so the ASCII default is byte-for-byte the historical output.
+function M.compose_icon(icon, text, max_cells)
+  if type(text) ~= "string" then
+    text = ""
+  end
+  local composed = text
+  if M.valid_icon(icon) and icon ~= "" then
+    if text == "" then
+      composed = icon
+    else
+      composed = icon .. " " .. text
+    end
+  end
+  local bound = max_cells or M.MODULE_TEXT_MAX_CELLS
+  if M.display_cells(composed) <= bound then
+    return composed
+  end
+  return M.truncate_cells(composed, bound)
+end
+
+-- Battery ladder rung (1..5) for a capacity/state pair and icon set. ASCII
+-- keeps the historical `+` charging mark (baked into its ladder); the PUA
+-- and Nerd Font sets carry native charging ladders. `full` is a distinct
+-- glyph in every set.
+function M.battery_glyph(name, capacity, state)
+  local bucket = M.battery_bucket(capacity)
+  if bucket == nil then
+    return ""
+  end
+  local set = name
+  if type(set) ~= "string" or M.ICON_SETS[set] == nil then
+    set = M.ICON_SET_DEFAULT
+  end
+  if state == "full" then
+    -- ASCII keeps the historical capacity bucket byte for byte (a full
+    -- battery at 100% already reads `[====]`); the opt-in maps use their
+    -- distinct full glyph.
+    if set == M.ICON_SET_DEFAULT then
+      return M.icon_glyph(set, "battery", bucket)
+    end
+    return M.icon_glyph(set, "battery_full")
+  end
+  if state == "charging" then
+    return M.icon_glyph(set, "battery_charging", bucket)
+  end
+  return M.icon_glyph(set, "battery", bucket)
+end
+
+
 -- Bounded in-plugin template renderer: `{key}` is replaced by `data[key]`
 -- (a missing key keeps its literal `{key}`), then the result is cut to
 -- `max_bytes` on a character boundary. Pure; the module never builds a format
@@ -399,7 +843,15 @@ end
 -- of a registered command) is ever accepted: shell/exec strings are not a
 -- vehicle and can never reach the scene. Returns nil when the command is
 -- absent or not a string. Arguments must be a plain table when present.
-function M.click_binding(command, args)
+--
+-- `region_id` (optional) declares the per-item band hit region that makes the
+-- span route every pointer button (Core #2248): the host derives the display
+-- rectangle, injects the region id and the `button` spelling into the command
+-- args, and never asks the plugin for coordinates. `region_kind` is `module`
+-- for a whole module or `item` for one capsule. An invalid id/kind omits the
+-- region (fail closed to legacy left-only dispatch) instead of failing the
+-- whole component.
+function M.click_binding(command, args, region_id, region_kind)
   if type(command) ~= "string" or command == "" then
     return nil
   end
@@ -410,7 +862,52 @@ function M.click_binding(command, args)
   if args ~= nil then
     binding.args = args
   end
+  if M.valid_region_id(region_id) then
+    local kind = region_kind
+    if M.REGION_KINDS[kind] ~= true then
+      kind = M.REGION_KIND_DEFAULT
+    end
+    binding.region = { id = region_id, kind = kind }
+  end
   return binding
+end
+
+-- Bound for a declared hit-region id: the Core `UI_MAX_REGION_ID_BYTES`
+-- (64) and its closed grammar `[a-z0-9._:-]`. Invalid ids are omitted rather
+-- than painted, so a bad id degrades to left-only dispatch.
+M.REGION_ID_MAX_BYTES = 64
+M.REGION_KIND_DEFAULT = "module"
+M.REGION_KINDS = { module = true, item = true }
+
+-- Whether `id` is an acceptable region identity.
+function M.valid_region_id(id)
+  if type(id) ~= "string" or id == "" or #id > M.REGION_ID_MAX_BYTES then
+    return false
+  end
+  return string.match(id, "^[a-z0-9._:-]+$") ~= nil
+end
+
+-- Accepted pointer-button spellings and the legacy default. The host injects
+-- `button` only for a region-aware span; a direct command invocation (palette
+-- or user keymap) and a legacy left-only span carry no button, which reads as
+-- the primary button.
+M.BUTTON_DEFAULT = "left"
+M.BUTTONS = { left = true, right = true, middle = true }
+M.BUTTON_SPELLINGS = { "left", "right", "middle" }
+
+-- Normalized button for one command invocation: `left`, `right`, or `middle`;
+-- an absent/unknown value reads as `left` (safe default, never a crash).
+function M.click_button(args)
+  if type(args) ~= "table" and type(args) ~= "userdata" then
+    return M.BUTTON_DEFAULT
+  end
+  local ok, value = pcall(function()
+    return args.button
+  end)
+  if ok and type(value) == "string" and M.BUTTONS[value] == true then
+    return value
+  end
+  return M.BUTTON_DEFAULT
 end
 
 -- Notification payload for the tooltip→notify fallback, or nil when there is
@@ -443,6 +940,29 @@ function M.label_diagnostic(value)
     shown = type(value)
   end
   return M.LABEL_DIAGNOSTIC_PREFIX .. shown .. M.LABEL_DIAGNOSTIC_SUFFIX
+end
+
+-- Bounded diagnostic body for a rejected `icons` value, or nil when the value
+-- is absent or accepted. Mirrors `label_diagnostic`: the echoed value is cut
+-- to `LABEL_DIAGNOSTIC_MAX_CHARS` characters and control bytes are replaced,
+-- the default ASCII set still paints, and the report is deduplicated by the
+-- caller.
+function M.icons_diagnostic(value)
+  if value == nil then
+    return nil
+  end
+  if type(value) == "string" and M.ICON_SETS[value] ~= nil then
+    return nil
+  end
+  local shown
+  if type(value) == "string" then
+    local text = M.truncate_chars(value, M.LABEL_DIAGNOSTIC_MAX_CHARS)
+    text = string.gsub(text, "%c", "?")
+    shown = "'" .. text .. "'"
+  else
+    shown = type(value)
+  end
+  return M.ICONS_DIAGNOSTIC_PREFIX .. shown .. M.ICONS_DIAGNOSTIC_SUFFIX
 end
 
 -- Capsule label text for one workspace row under the selected `label` mode.
@@ -488,6 +1008,11 @@ function M.read_settings(get)
     opts.label = label
   end
   opts.label_diagnostic = M.label_diagnostic(label)
+  local icons = get("icons")
+  if type(icons) == "string" and M.ICON_SETS[icons] ~= nil then
+    opts.icons = icons
+  end
+  opts.icons_diagnostic = M.icons_diagnostic(icons)
   opts.specs = M.read_plan(get, opts)
   return opts
 end
@@ -621,10 +1146,11 @@ function M.segments(rows, opts)
 end
 
 -- Converts one workspaces segment to a chassis atom. Atom shape:
--- `{ text, bold?, fg?, on_click?, tooltip? }`. Only inactive pills are
--- clickable: separators, the active capsule, the empty
--- placeholder, and the scratchpad indicator switch nothing (Core
--- `workspaceline_hit_test` / `workspaceline_click`).
+-- `{ text, bold?, fg?, bg?, on_click?, on_scroll?, tooltip?, region? }`.
+-- Every capsule (active included) carries the per-item hit region
+-- `workspace.<id>`, so left focuses, middle/right show the workspace detail,
+-- and the wheel cycles to the previous/next workspace. Separators, the empty
+-- placeholder, and the scratchpad indicator stay non-interactive.
 local function segment_atom(segment)
   local atom = { text = segment.text, whole = true }
   if segment.kind == "pill" then
@@ -640,9 +1166,14 @@ local function segment_atom(segment)
         atom.bold = true
       end
     end
-    if not segment.active then
-      atom.on_click = M.click_binding(M.FOCUS_COMMAND, { id = segment.id })
-    end
+    local region = "workspace." .. tostring(segment.id)
+    atom.on_click = M.click_binding(
+      M.WORKSPACE_ACTION_COMMAND,
+      { id = segment.id },
+      region,
+      "item"
+    )
+    atom.on_scroll = M.click_binding(M.WORKSPACE_ACTION_COMMAND, {}, region, "item")
   elseif segment.kind == "separator" then
     atom.separator = true
   end
@@ -674,16 +1205,67 @@ function M.clock_text(format, now)
   return text
 end
 
--- Clock module render: one atom from `os.date`. `options.tooltip` (a plain
--- string) becomes the tooltip→notify detail text; the module is not otherwise
--- clickable.
+-- Right-click cycle (bar#30): short time, calendar date, ISO date. The
+-- selection is module-local generation state; a right click advances it and
+-- re-renders immediately, and the next timer tick keeps the new format.
+M.CLOCK_CYCLE_FORMATS = {
+  { name = "short", format = M.CLOCK_DEFAULT_FORMAT },
+  { name = "date", format = "%a %d %b" },
+  { name = "calendar", format = "%Y-%m-%d" },
+}
+M._clock_format_index = 1
+
+-- Current cycle entry (`{ name, format }`).
+function M.clock_cycle_entry()
+  local index = M._clock_format_index
+  if not is_integer(index) or M.CLOCK_CYCLE_FORMATS[index] == nil then
+    index = 1
+  end
+  return M.CLOCK_CYCLE_FORMATS[index]
+end
+
+-- Advances the cycle and returns the new entry.
+function M.clock_cycle()
+  local index = M._clock_format_index
+  if not is_integer(index) or index < 1 or index > #M.CLOCK_CYCLE_FORMATS then
+    index = 1
+  end
+  index = index % #M.CLOCK_CYCLE_FORMATS + 1
+  M._clock_format_index = index
+  return M.CLOCK_CYCLE_FORMATS[index]
+end
+
+-- Full local date-time detail for the clock's middle click, bounded to the
+-- template byte cap. Nil when `now` is unusable.
+function M.clock_detail(now)
+  if type(now) ~= "number" then
+    return nil
+  end
+  local ok, text = pcall(os.date, "%A, %d %B %Y %H:%M:%S", now)
+  if not ok or type(text) ~= "string" or text == "" then
+    return nil
+  end
+  return M.truncate_bytes(text, M.TEMPLATE_MAX_BYTES)
+end
+
+-- Clock icon from the selected set (empty for ASCII).
+function M.clock_icon(icons)
+  return M.icon_glyph(icons, "clock")
+end
+
+-- Clock module render: one atom from `os.date`, prefixed by the selected
+-- icon when the map carries one. A per-module `format` overrides the click
+-- cycle; `options.tooltip` is the detail text used by the middle click.
+-- Every atom carries the `clock` region so right/middle reach `clock-action`.
 function M.clock_atoms(ctx)
   local options = ctx.options or {}
   local format = options.format
   if type(format) ~= "string" or format == "" then
-    format = M.CLOCK_DEFAULT_FORMAT
+    format = M.clock_cycle_entry().format
   end
-  local atom = { text = M.clock_text(format, ctx.now) }
+  local text = M.compose_icon(M.clock_icon(options.icons), M.clock_text(format, ctx.now))
+  local atom = { text = text }
+  atom.on_click = M.click_binding(M.CLOCK_ACTION_COMMAND, {}, "clock")
   if type(options.tooltip) == "string" and options.tooltip ~= "" then
     atom.tooltip = options.tooltip
   end
@@ -787,20 +1369,70 @@ function M.audio_valid_snapshot(snap)
   return ok and valid == true
 end
 
--- Volume icon for a validated snapshot: muted (or parked at zero) reads
--- `MUTE`; otherwise low/med/high bands. Pure; thresholds are presentation
+-- Audio device class from the port name, or nil when the port does not name
+-- a known class. Port names are PulseAudio/PipeWire identifiers such as
+-- `analog-output-headphones`, `analog-output-speaker`, `hdmi-output-0`,
+-- `usb-...`, or `bluez-output-...`.
+function M.audio_device_class(port)
+  if type(port) ~= "string" then
+    return nil
+  end
+  local lower = string.lower(port)
+  if string.find(lower, "headphone", 1, true) ~= nil then
+    return "headphones"
+  end
+  if string.find(lower, "headset", 1, true) ~= nil then
+    return "headset"
+  end
+  if string.find(lower, "hdmi", 1, true) ~= nil then
+    return "hdmi"
+  end
+  if string.find(lower, "usb", 1, true) ~= nil then
+    return "usb"
+  end
+  if string.find(lower, "bluez", 1, true) ~= nil
+    or string.find(lower, "bluetooth", 1, true) ~= nil then
+    return "bluetooth"
+  end
+  if string.find(lower, "speaker", 1, true) ~= nil
+    or string.find(lower, "analog-output", 1, true) ~= nil then
+    return "speaker"
+  end
+  return nil
+end
+
+-- Volume band for a validated snapshot: muted (or parked at zero) reads the
+-- muted glyph; otherwise low/med/high. Pure; thresholds are presentation
 -- policy and live entirely Lua-side.
-function M.audio_icon(snap)
+function M.audio_band(snap)
   if snap.muted == true or snap.volume_pct == 0 then
-    return M.AUDIO_ICON_MUTED
+    return "audio_muted"
   end
   if snap.volume_pct < 34 then
-    return M.AUDIO_ICON_LOW
+    return "audio_low"
   end
   if snap.volume_pct < 67 then
-    return M.AUDIO_ICON_MED
+    return "audio_medium"
   end
-  return M.AUDIO_ICON_HIGH
+  return "audio_high"
+end
+
+-- Audio icon for a validated snapshot and icon set. Muted always wins; a
+-- recognized device class selects the class glyph when the set provides one
+-- (the ASCII set leaves class entries empty, so it falls through to the
+-- historical MUTE/LO/MED/HI bands).
+function M.audio_icon(snap, icons)
+  if snap.muted == true or snap.volume_pct == 0 then
+    return M.icon_glyph(icons, "audio_muted")
+  end
+  local class = M.audio_device_class(snap.port)
+  if class ~= nil then
+    local glyph = M.icon_glyph(icons, "audio_" .. class)
+    if glyph ~= "" then
+      return glyph
+    end
+  end
+  return M.icon_glyph(icons, M.audio_band(snap))
 end
 
 -- Audio module text: `{icon} {volume}%` plus `:{port}` when `show_port` is
@@ -819,7 +1451,7 @@ function M.audio_text(snap, options)
   end
   local port_short = M.truncate_chars(snap.port, port_chars)
   local data = {
-    icon = M.audio_icon(snap),
+    icon = M.audio_icon(snap, options.icons),
     volume = tostring(snap.volume_pct),
     port = port_short,
     muted = tostring(snap.muted),
@@ -845,6 +1477,19 @@ function M.audio_tooltip(snap)
     return nil
   end
   return snap.port
+end
+
+-- Audio detail text for the right-click fallback: volume, mute state, and the
+-- full port. Nil when there is no usable snapshot.
+function M.audio_detail(snap)
+  if not M.audio_valid_snapshot(snap) then
+    return nil
+  end
+  local text = "Volume " .. snap.volume_pct .. "%"
+  if snap.muted == true then
+    text = text .. " (muted)"
+  end
+  return M.truncate_bytes(text .. ", " .. snap.port, M.TEMPLATE_MAX_BYTES)
 end
 
 -- Coalesces one wheel/scroll delta into a bounded integer volume step, or nil
@@ -1147,11 +1792,53 @@ function M.compact(text)
   return string.gsub(one, "%s+$", "")
 end
 
+-- Wi-Fi ladder rung (1..4) for an optional signal percentage. The shipped
+-- `network.state` snapshot has no signal field, so an absent value reads as
+-- the top rung (connected); a future provider that reports `signal_pct` gets
+-- the real ladder without a bar change. Never fabricates a weak signal.
+function M.signal_rung(signal)
+  if type(signal) ~= "number" or signal ~= signal then
+    return 4
+  end
+  if signal < 26 then
+    return 1
+  end
+  if signal < 51 then
+    return 2
+  end
+  if signal < 76 then
+    return 3
+  end
+  return 4
+end
+
+-- Network icon for a validated snapshot: link-specific glyph, with the Wi-Fi
+-- ladder selected by `signal_pct` when the provider reports it. The ASCII set
+-- returns "" for every link, leaving the historical text untouched.
+function M.network_icon(data, icons)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return ""
+  end
+  if data.link == "wifi" then
+    return M.icon_glyph(icons, "network_wifi", M.signal_rung(data.signal_pct))
+  end
+  if data.link == "ethernet" then
+    return M.icon_glyph(icons, "network_ethernet")
+  end
+  if data.link == "disconnected" then
+    return M.icon_glyph(icons, "network_disconnected")
+  end
+  if data.link == "disabled" then
+    return M.icon_glyph(icons, "network_disabled")
+  end
+  return ""
+end
+
 -- Network display text, or nil when the snapshot hides (invalid link). The
--- default renders link plus measured bandwidth plus the ESSID in parentheses
--- when the sub-grant holds; a custom `format` template overrides the whole
--- text with `{link}`, `{down}`, `{up}`, and `{essid}` keys (absent keys
--- render as "").
+-- default renders the link icon plus link plus measured bandwidth plus the
+-- ESSID in parentheses when the sub-grant holds; a custom `format` template
+-- overrides the whole text with `{icon}`, `{link}`, `{down}`, `{up}`, and
+-- `{essid}` keys (absent keys render as "").
 function M.network_text(data, essid, options)
   if type(data) ~= "table" and type(data) ~= "userdata" then
     return nil
@@ -1159,15 +1846,18 @@ function M.network_text(data, essid, options)
   if not M.valid_link(data.link) then
     return nil
   end
+  options = options or {}
   local down = M.format_bps(data.down_bps)
   local up = M.format_bps(data.up_bps)
   local clean_essid = nil
   if type(essid) == "string" and essid ~= "" then
     clean_essid = M.truncate_bytes(essid, M.ESSID_MAX_BYTES)
   end
+  local icon = M.network_icon(data, options.icons)
   local format = options.format
   if type(format) == "string" and format ~= "" then
     return M.compact(M.render_template(format, {
+      icon = icon,
       link = data.link,
       down = down or "",
       up = up or "",
@@ -1181,12 +1871,13 @@ function M.network_text(data, essid, options)
   if clean_essid ~= nil then
     text = text .. " (" .. clean_essid .. ")"
   end
-  return text
+  return M.compose_icon(icon, text)
 end
 
 -- Network module render: one readout atom, or no atoms when the provider is
--- ungranted, absent, failing, or misshapen. The atom is never clickable (no
--- control wiring exists or is wanted for network).
+-- ungranted, absent, failing, or misshapen. The atom carries the `network`
+-- region: left/middle show the detail text, right tries the optional radio
+-- control head and falls back to the detail when no head is granted.
 function M.network_atoms(ctx)
   local options = ctx.options or {}
   local data = M.service_data(M.resolve_service(M.NETWORK_STATE_IFACE))
@@ -1194,12 +1885,66 @@ function M.network_atoms(ctx)
   if text == nil then
     return {}
   end
-  return { { text = text } }
+  return {
+    {
+      text = text,
+      on_click = M.click_binding(M.NETWORK_ACTION_COMMAND, {}, "network"),
+    },
+  }
+end
+
+-- Optional network control head (bar#30 "right toggles the Wi-Fi radio when
+-- granted"). The 0.0.26 provider set serves no network control interface, so
+-- this negotiation resolves nil and the right click degrades to the detail
+-- notification. A future provider still needs the matching manifest
+-- `[services.required]` entry (and a capability head); this probe is the
+-- forward-compatible call site only.
+M.NETWORK_CONTROL_IFACE = "network.control"
+
+-- Flips the radio through an optional control head. Returns true only when a
+-- control method admitted the call; every absent/denied path returns false and
+-- the caller degrades to detail (never a retry or an escalation).
+function M.network_toggle()
+  local control = M.resolve_service(M.NETWORK_CONTROL_IFACE)
+  if control == nil then
+    return false
+  end
+  local ok, set_power = pcall(function()
+    return control.set_power
+  end)
+  if not ok or type(set_power) ~= "function" then
+    return false
+  end
+  local data = M.service_data(M.resolve_service(M.NETWORK_STATE_IFACE))
+  if data == nil or not M.valid_link(data.link) then
+    return false
+  end
+  local target = data.link == "disabled"
+  local called = pcall(set_power, target)
+  return called == true
+end
+
+-- Bluetooth icon for a validated snapshot: connected (powered with at least
+-- one bonded device connected), on, or off. ASCII returns "" (historical
+-- text unchanged).
+function M.bluetooth_icon(data, icons)
+  if type(data) ~= "table" and type(data) ~= "userdata" then
+    return ""
+  end
+  if data.powered ~= true then
+    return M.icon_glyph(icons, "bluetooth_off")
+  end
+  if is_integer(data.connected_count) and data.connected_count > 0 then
+    return M.icon_glyph(icons, "bluetooth_connected")
+  end
+  return M.icon_glyph(icons, "bluetooth_on")
 end
 
 -- Bluetooth display text, or nil when the snapshot hides (`powered` must be
--- a boolean; counters fall back to 0). The default renders the radio state
--- plus the connected/total device counts while powered.
+-- a boolean; counters fall back to 0). The default renders the radio icon,
+-- state, and connected/total device counts while powered; a custom `format`
+-- template overrides with `{icon}`, `{status}`, `{connected}`, `{total}`,
+-- and `{powered}` keys.
 function M.bluetooth_text(data, options)
   if type(data) ~= "table" and type(data) ~= "userdata" then
     return nil
@@ -1207,6 +1952,7 @@ function M.bluetooth_text(data, options)
   if type(data.powered) ~= "boolean" then
     return nil
   end
+  options = options or {}
   local connected = 0
   if is_integer(data.connected_count) and data.connected_count >= 0 then
     connected = math.floor(data.connected_count)
@@ -1219,9 +1965,11 @@ function M.bluetooth_text(data, options)
   if data.powered then
     status = "on"
   end
+  local icon = M.bluetooth_icon(data, options.icons)
   local format = options.format
   if type(format) == "string" and format ~= "" then
     return M.compact(M.render_template(format, {
+      icon = icon,
       status = status,
       connected = tostring(connected),
       total = tostring(total),
@@ -1232,7 +1980,7 @@ function M.bluetooth_text(data, options)
   if data.powered and total > 0 then
     text = text .. " (" .. connected .. "/" .. total .. ")"
   end
-  return text
+  return M.compose_icon(icon, text)
 end
 
 -- Bluetooth detail text (`alias (address)` per bonded device, bounded), or
@@ -1277,7 +2025,7 @@ function M.bluetooth_atoms(ctx)
   if text == nil then
     return {}
   end
-  local atom = { text = text }
+  local atom = { text = text, region = "bluetooth" }
   if options.toggle == true then
     local control = M.resolve_service(M.BLUETOOTH_CONTROL_IFACE)
     if control ~= nil then
@@ -1331,7 +2079,7 @@ function M.backlight_atoms(ctx)
   if text == nil then
     return {}
   end
-  local atom = { text = text }
+  local atom = { text = text, region = "backlight" }
   local step = options.step
   if step == nil then
     step = M.BACKLIGHT_DEFAULT_STEP
@@ -1383,7 +2131,7 @@ function M.idle_atoms(ctx)
   if text == nil then
     return {}
   end
-  local atom = { text = text }
+  local atom = { text = text, region = "idle" }
   local control = M.resolve_service(M.IDLE_CONTROL_IFACE)
   if control ~= nil then
     atom.on_click = M.click_binding(M.IDLE_TOGGLE_COMMAND)
@@ -1610,18 +2358,12 @@ function M.battery_bucket(capacity)
 end
 
 -- Battery icon for a capacity/state pair (`""` when the capacity is not a
--- number). The charging mark rides the icon; the alarm rides the theme
+-- number). The selected map supplies the ladder; the ASCII set bakes the
+-- historical `+` charging mark into its charging ladder, while the PUA and
+-- Nerd Font sets carry native charging glyphs. The alarm rides the theme
 -- token, never the glyph.
-function M.battery_icon(capacity, state)
-  local bucket = M.battery_bucket(capacity)
-  if bucket == nil then
-    return ""
-  end
-  local icon = M.BATTERY_ICONS[bucket]
-  if state == "charging" then
-    icon = icon .. M.BATTERY_CHARGING_MARK
-  end
-  return icon
+function M.battery_icon(capacity, state, icons)
+  return M.battery_glyph(icons, capacity, state)
 end
 
 -- CPU module render: one atom from the `system.cpu` snapshot, or no atoms
@@ -1650,19 +2392,24 @@ function M.cpu_atoms(ctx)
   )
   local state = M.hot_state(total, marks.warning, marks.critical)
   local shown = M.round_pct(total)
-  local format = options.format
-  if type(format) ~= "string" or format == "" then
-    format = M.CPU_DEFAULT_FORMAT
+  local icon = M.icon_glyph(options.icons, "cpu")
+  local custom = type(options.format) == "string" and options.format ~= ""
+  local format = M.CPU_DEFAULT_FORMAT
+  if custom then
+    format = options.format
   end
   local text = M.render_template(
     format,
-    { total = shown, total_pct = shown },
+    { icon = icon, total = shown, total_pct = shown },
     M.TEMPLATE_MAX_BYTES
   )
   if text == "" then
     return {}
   end
-  local atom = { text = text }
+  if not custom then
+    text = M.compose_icon(icon, text)
+  end
+  local atom = { text = text, region = "cpu" }
   if state == "warning" or state == "critical" then
     atom.fg = M.state_token(state)
   end
@@ -1701,11 +2448,14 @@ function M.memory_atoms(ctx)
   )
   local state = M.hot_state(pct, marks.warning, marks.critical)
   local shown = M.round_pct(pct)
-  local format = options.format
-  if type(format) ~= "string" or format == "" then
-    format = M.MEMORY_DEFAULT_FORMAT
+  local icon = M.icon_glyph(options.icons, "memory")
+  local custom = type(options.format) == "string" and options.format ~= ""
+  local format = M.MEMORY_DEFAULT_FORMAT
+  if custom then
+    format = options.format
   end
   local text = M.render_template(format, {
+    icon = icon,
     pct = shown,
     used = M.num1(used),
     total = M.num1(total),
@@ -1716,7 +2466,10 @@ function M.memory_atoms(ctx)
   if text == "" then
     return {}
   end
-  local atom = { text = text }
+  if not custom then
+    text = M.compose_icon(icon, text)
+  end
+  local atom = { text = text, region = "memory" }
   if state == "warning" or state == "critical" then
     atom.fg = M.state_token(state)
   end
@@ -1767,7 +2520,7 @@ function M.battery_atoms(ctx)
   if capacity == nil or state == nil then
     return {}
   end
-  local icon = M.battery_icon(capacity, state)
+  local icon = M.battery_glyph(options.icons, capacity, state)
   if icon == "" then
     return {}
   end
@@ -1785,7 +2538,7 @@ function M.battery_atoms(ctx)
   if text == "" then
     return {}
   end
-  local atom = { text = text }
+  local atom = { text = text, region = "battery" }
   if state == "discharging" then
     local marks = M.thresholds(
       options,
@@ -1906,11 +2659,175 @@ function M.audio_step(delta)
   return ok == true
 end
 
+-- Microphone (source) read fields ride the same validated `audio.state`
+-- snapshot. Both fields are optional in the provider contract, so an absent
+-- source hides the module instead of fabricating a level.
+function M.microphone_snapshot()
+  local snap = M.audio_snapshot()
+  if snap == nil then
+    return nil
+  end
+  local volume = nil
+  local muted = nil
+  local ok = pcall(function()
+    volume = snap.source_volume_pct
+    muted = snap.source_muted
+  end)
+  if not ok or not is_integer(volume) or volume < 0 or volume > M.VOLUME_MAX_PCT then
+    return nil
+  end
+  if type(muted) ~= "boolean" then
+    return nil
+  end
+  return snap
+end
+
+-- Microphone icon: muted overrides the on glyph.
+function M.microphone_icon(snap, icons)
+  if snap ~= nil and snap.source_muted == true then
+    return M.icon_glyph(icons, "microphone_muted")
+  end
+  return M.icon_glyph(icons, "microphone_on")
+end
+
+-- Microphone text: `{icon} {volume}%` by default; a custom `format` template
+-- overrides with `{icon}`, `{volume}`, and `{muted}` keys.
+function M.microphone_text(snap, options)
+  if snap == nil then
+    return ""
+  end
+  options = options or {}
+  local volume = nil
+  local muted = nil
+  local ok = pcall(function()
+    volume = snap.source_volume_pct
+    muted = snap.source_muted
+  end)
+  if not ok or not is_integer(volume) or type(muted) ~= "boolean" then
+    return ""
+  end
+  local data = {
+    icon = M.microphone_icon(snap, options.icons),
+    volume = tostring(volume),
+    muted = tostring(muted),
+  }
+  local format = options.format
+  if type(format) ~= "string" or format == "" then
+    format = M.MICROPHONE_DEFAULT_FORMAT
+  end
+  return M.compact(M.render_template(format, data, M.TEMPLATE_MAX_BYTES))
+end
+
+-- Microphone detail text, or nil when the source fields are absent.
+function M.microphone_tooltip(snap)
+  if snap == nil then
+    return nil
+  end
+  local volume = nil
+  local muted = nil
+  local ok = pcall(function()
+    volume = snap.source_volume_pct
+    muted = snap.source_muted
+  end)
+  if not ok or not is_integer(volume) or type(muted) ~= "boolean" then
+    return nil
+  end
+  local text = "Microphone " .. volume .. "%"
+  if muted then
+    text = text .. " (muted)"
+  end
+  return M.truncate_bytes(text, M.TEMPLATE_MAX_BYTES)
+end
+
+-- Optional source-control methods on the audio control head. The shipped
+-- provider exposes sink control only; the source methods are probed
+-- tolerantly and an absent method fails closed (no invented capability and
+-- no fallback to the sink, which would mute the wrong device).
+function M.microphone_control_method(name)
+  local svc = audio_service(M.AUDIO_CONTROL_IFACE)
+  if svc == nil then
+    return nil
+  end
+  local ok, method = pcall(function()
+    return svc[name]
+  end)
+  if ok and type(method) == "function" then
+    return method
+  end
+  return nil
+end
+
+-- Whether the control head serves both source methods (read-only render
+-- otherwise).
+function M.microphone_control_present()
+  return M.microphone_control_method("toggle_source_mute") ~= nil
+    and M.microphone_control_method("set_source_volume") ~= nil
+end
+
+-- Toggle source mute. True only on an admitted call.
+function M.microphone_toggle()
+  local method = M.microphone_control_method("toggle_source_mute")
+  if method == nil then
+    return false
+  end
+  local called = pcall(method, {})
+  return called == true
+end
+
+-- Step source volume with the same bounded delta policy as the sink.
+function M.microphone_step(delta)
+  local step = M.volume_step(delta)
+  if step == nil then
+    return false
+  end
+  local method = M.microphone_control_method("set_source_volume")
+  if method == nil then
+    return false
+  end
+  local called = pcall(method, { delta = step })
+  return called == true
+end
+
+-- Microphone module render: one atom from the source fields, or {} when the
+-- provider reports no source (fail closed to hidden on current hosts).
+-- With source control the left/right click toggles mute and the wheel steps
+-- the input; without it the atom is read-only and every button shows the
+-- detail text.
+function M.microphone_atoms(ctx)
+  local snap = M.microphone_snapshot()
+  if snap == nil then
+    return {}
+  end
+  local options = nil
+  if ctx ~= nil then
+    options = ctx.options
+  end
+  local text = M.microphone_text(snap, options)
+  if text == "" then
+    return {}
+  end
+  local atom = { text = text, region = "microphone" }
+  local tooltip = M.microphone_tooltip(snap)
+  if tooltip ~= nil then
+    atom.tooltip = tooltip
+  end
+  if M.microphone_control_present() then
+    atom.on_click = M.click_binding(M.MICROPHONE_ACTION_COMMAND, {}, "microphone")
+    atom.on_scroll = M.click_binding(M.MICROPHONE_STEP_COMMAND, {}, "microphone")
+  elseif tooltip ~= nil then
+    atom.on_click = M.click_binding(
+      M.DETAIL_COMMAND,
+      { text = tooltip },
+      "microphone"
+    )
+  end
+  return { atom }
+end
+
 -- PulseAudio module render: one atom from the state snapshot, or {} when the
--- monitor is absent (fail closed to hidden). Click mutes and wheel steps only
--- when the control head resolves; otherwise the atom is read-only text with
--- the port tooltip (a tooltip beside a command would need a Phase C vehicle,
--- so the clickable atom carries the port in its text instead).
+-- monitor is absent (fail closed to hidden). Click mutes (left/middle) and
+-- shows the detail (right); wheel steps. Without the control head the atom is
+-- read-only text whose click is the detail fallback.
 function M.pulseaudio_atoms(ctx)
   local snap = M.audio_snapshot()
   if snap == nil then
@@ -1924,14 +2841,20 @@ function M.pulseaudio_atoms(ctx)
   if text == "" then
     return {}
   end
-  local atom = { text = text }
+  local atom = { text = text, region = "pulseaudio" }
   local tooltip = M.audio_tooltip(snap)
   if tooltip ~= nil then
     atom.tooltip = tooltip
   end
   if M.audio_control_present() then
-    atom.on_click = M.click_binding(M.AUDIO_TOGGLE_COMMAND, {})
-    atom.on_scroll = M.click_binding(M.AUDIO_STEP_COMMAND, {})
+    atom.on_click = M.click_binding(M.AUDIO_TOGGLE_COMMAND, {}, "pulseaudio")
+    atom.on_scroll = M.click_binding(M.AUDIO_STEP_COMMAND, {}, "pulseaudio")
+  elseif tooltip ~= nil then
+    atom.on_click = M.click_binding(
+      M.DETAIL_COMMAND,
+      { text = tooltip },
+      "pulseaudio"
+    )
   end
   return { atom }
 end
@@ -2103,6 +3026,23 @@ M.MODULES.pulseaudio = {
   option_keys = { "format", "tick_ms", "tooltip", "show_port", "port_max_chars" },
   render = function(ctx)
     return M.pulseaudio_atoms(ctx)
+  end,
+}
+
+-- Microphone module (bar#30 icon/action parity): source level and mute from
+-- the same `audio.state@1.0.0` snapshot (`source_volume_pct` /
+-- `source_muted`), so no new provider capability is requested. Left/right
+-- toggle source mute and the wheel steps input only when the control head
+-- serves the optional source methods; the current provider exposes neither
+-- the live source fields nor source control, so the module hides fail closed.
+M.MODULES.microphone = {
+  name = "microphone",
+  kind = "timer",
+  tick_ms = M.MICROPHONE_TICK_MS,
+  tick_floor_ms = M.MICROPHONE_TICK_MS,
+  option_keys = { "format", "tick_ms", "tooltip" },
+  render = function(ctx)
+    return M.microphone_atoms(ctx)
   end,
 }
 
@@ -2320,8 +3260,10 @@ function M.clip(atoms, max_bytes)
 end
 
 -- Scene node for one atom. A tooltip with no command binds the detail command
--- (tooltip→notify fallback); anything else stays non-interactive. A scroll
--- binding rides alongside (wheel steps never replace the click target).
+-- (tooltip→notify fallback), carrying the atom's region when it declares one
+-- so middle/right also reach the detail instead of falling through to a
+-- clipboard paste behind chrome. A scroll binding rides alongside (wheel
+-- steps never replace the click target).
 function M.atom_node(atom)
   local node = { kind = "Text", text = atom.text }
   if atom.bold == true then
@@ -2336,7 +3278,11 @@ function M.atom_node(atom)
   if atom.on_click ~= nil then
     node.on_click = atom.on_click
   elseif atom.tooltip ~= nil then
-    node.on_click = { command = M.DETAIL_COMMAND, args = { text = atom.tooltip } }
+    node.on_click = M.click_binding(
+      M.DETAIL_COMMAND,
+      { text = atom.tooltip },
+      atom.region
+    )
   end
   if atom.on_scroll ~= nil then
     node.on_scroll = atom.on_scroll
@@ -2345,18 +3291,28 @@ function M.atom_node(atom)
 end
 
 -- Renders the ordered plan into atoms: each module's atoms in order, joined by
--- a single space between modules, then clipped to the line byte bound.
+-- a single space between modules, then clipped to the line byte bound. The
+-- chassis icon selection is injected into every module's option table (on a
+-- copy, so a spec never accumulates state), which keeps the opt-in maps
+-- global while per-module `format`/`tooltip` options stay module-local.
 function M.render_plan(opts, rows, now)
   local atoms = {}
   local first = true
   for _, spec in ipairs(opts.specs) do
     local def = M.MODULES[spec.name]
     if def ~= nil then
+      local options = {}
+      if type(spec.options) == "table" then
+        for key, value in pairs(spec.options) do
+          options[key] = value
+        end
+      end
+      options.icons = opts.icons
       local rendered = def.render({
         rows = rows,
         opts = opts,
         now = now,
-        options = spec.options,
+        options = options,
       })
       if type(rendered) == "table" and #rendered > 0 then
         if not first then
@@ -2405,6 +3361,98 @@ function M.focus_target(rows, id)
   return nil
 end
 
+-- Detail text for one workspace (middle/right click) or for the whole strip
+-- when `id` is absent. Nil when the id names no current row.
+function M.workspace_detail(rows, id)
+  if is_integer(id) then
+    for _, row in ipairs(rows) do
+      if row.id == id then
+        local text = "Workspace " .. tostring(row.id)
+        if type(row.name) == "string" and row.name ~= "" then
+          text = text .. ": " .. M.truncate_chars(row.name, M.NAME_MAX_CHARS)
+        end
+        local marks = {}
+        if row.active == true then
+          marks[#marks + 1] = "active"
+        end
+        if type(row.panel_count) == "number" and row.panel_count > 0 then
+          marks[#marks + 1] = row.panel_count .. " panels"
+        end
+        local attention = row.attention
+        if attention ~= nil and
+            (attention.bell == true or attention.activity == true or attention.exited == true) then
+          marks[#marks + 1] = "attention"
+        end
+        if #marks > 0 then
+          text = text .. " (" .. table.concat(marks, ", ") .. ")"
+        end
+        return M.truncate_bytes(text, M.TEMPLATE_MAX_BYTES)
+      end
+    end
+    return nil
+  end
+  if #rows == 0 then
+    return nil
+  end
+  local parts = {}
+  for _, row in ipairs(rows) do
+    local label = tostring(row.id)
+    if row.active == true then
+      label = label .. "*"
+    end
+    parts[#parts + 1] = label
+  end
+  return M.truncate_bytes(
+    "Workspaces: " .. table.concat(parts, ", "),
+    M.TEMPLATE_MAX_BYTES
+  )
+end
+
+-- Wheel target for the workspace strip: one step per dispatch (positive
+-- `delta` is wheel-up, which moves to the previous workspace; negative moves
+-- to the next), wrapping at both ends. The row order matches the painted strip
+-- (stable numeric id order), and a sub-line tick is a no-op like the audio
+-- wheel. Nil when there is nothing to step to.
+function M.workspace_step_target(rows, delta)
+  if type(delta) ~= "number" or delta ~= delta or delta == 0 then
+    return nil
+  end
+  if math.abs(delta) < 1 then
+    return nil
+  end
+  local count = math.min(#rows, M.MAX_WORKSPACES)
+  if count < 2 then
+    return nil
+  end
+  local ordered = {}
+  for index = 1, count do
+    ordered[index] = rows[index]
+  end
+  table.sort(ordered, function(a, b)
+    return a.id < b.id
+  end)
+  local active = 1
+  for index = 1, count do
+    if ordered[index].active == true then
+      active = index
+      break
+    end
+  end
+  local target = nil
+  if delta > 0 then
+    target = active - 1
+    if target < 1 then
+      target = count
+    end
+  else
+    target = active + 1
+    if target > count then
+      target = 1
+    end
+  end
+  return ordered[target].id
+end
+
 -- Host wiring. Skipped when the host table is absent so the pure functions
 -- above stay loadable on their own.
 if bitty == nil then
@@ -2423,30 +3471,34 @@ local function now_seconds()
   return nil
 end
 
--- Reports a rejected `label` value through the already-declared
--- platform.notify grant: best-effort, bounded, and deduplicated per distinct
--- diagnostic so a reload storm cannot spam the notify surface. An ungranted or
--- absent notify surface never breaks activation; the fallback label still
--- paints (never a silent empty bar).
-local reported_label_diagnostic = nil
-local function report_label_diagnostic(settings)
-  local body = settings.label_diagnostic
+-- Reports rejected `label` / `icons` values through the already-declared
+-- platform.notify grant: best-effort, bounded, and deduplicated per setting so
+-- a reload storm cannot spam the notify surface or grow the dedup state. An
+-- ungranted or absent notify surface never breaks activation; the fallback
+-- setting still paints (never a silent empty bar).
+local reported_diagnostics = { label = nil, icons = nil }
+local function report_setting_diagnostic(key, body)
   if body == nil then
-    reported_label_diagnostic = nil
+    reported_diagnostics[key] = nil
     return
   end
-  if body == reported_label_diagnostic then
+  if body == reported_diagnostics[key] then
     return
   end
-  reported_label_diagnostic = body
+  reported_diagnostics[key] = body
   if bitty.notify == nil or bitty.notify.show == nil then
     return
   end
   pcall(bitty.notify.show, { title = M.TOOLTIP_TITLE, body = body })
 end
 
+local function report_diagnostics(settings)
+  report_setting_diagnostic("label", settings.label_diagnostic)
+  report_setting_diagnostic("icons", settings.icons_diagnostic)
+end
+
 local opts = M.read_settings(settings_get)
-report_label_diagnostic(opts)
+report_diagnostics(opts)
 local timers = {}
 
 local function build_component()
@@ -2548,6 +3600,16 @@ local function reschedule()
   end
 end
 
+-- Shared optional properties for a region-aware click/scroll command: the
+-- host injects `button` (left/right/middle) on a click and `region` on both
+-- clicks and scrolls. A direct palette/keymap invocation omits both, so both
+-- entries stay optional.
+local function click_properties(properties)
+  properties.button = { type = "string", enum = M.BUTTON_SPELLINGS }
+  properties.region = { type = "string", maxLength = M.REGION_ID_MAX_BYTES }
+  return properties
+end
+
 bitty.commands.register({
   id = FOCUS_COMMAND_ID,
   title = "Unified Bar: focus workspace",
@@ -2575,9 +3637,9 @@ bitty.commands.register({
   description = "Show a module's detail text as a notification (tooltip fallback).",
   args_schema = {
     type = "object",
-    properties = {
+    properties = click_properties({
       text = { type = "string", maxLength = M.TEMPLATE_MAX_BYTES },
-    },
+    }),
     required = { "text" },
     additionalProperties = false,
   },
@@ -2613,6 +3675,30 @@ local function notify_unavailable(body)
   return false
 end
 
+-- Best-effort detail notification for a middle/right pointer action. Nil or
+-- empty detail is a no-op (false), never an empty notification.
+local function notify_detail(body)
+  if type(body) ~= "string" or body == "" then
+    return false
+  end
+  return notify_unavailable(body)
+end
+
+-- Reads one command argument through the bridge shape (a plain table in the
+-- mock, indexable userdata over the host bridge). Absent/unreadable reads nil.
+function M.command_arg(args, key)
+  if type(args) ~= "table" and type(args) ~= "userdata" then
+    return nil
+  end
+  local ok, value = pcall(function()
+    return args[key]
+  end)
+  if ok then
+    return value
+  end
+  return nil
+end
+
 bitty.commands.register({
   id = BLUETOOTH_TOGGLE_COMMAND_ID,
   title = "Unified Bar: toggle Bluetooth power",
@@ -2644,19 +3730,29 @@ bitty.commands.register({
   end,
 })
 
--- Audio control commands (CTX-1220, bitty#2013): click mutes, wheel steps.
--- Both fail closed (false) when the control head is absent, denied, or
--- rate-limited; the bar re-polls `get()` for the new level on success.
+-- Audio control commands (CTX-1220, bitty#2013; bar#30 buttons): left/middle
+-- mute, right shows the detail, wheel steps. Both fail closed (false) when the
+-- control head is absent, denied, or rate-limited; the bar re-polls `get()`
+-- for the new level on success.
 bitty.commands.register({
   id = AUDIO_TOGGLE_COMMAND_ID,
-  title = "Unified Bar: toggle audio mute",
-  description = "Toggle the default sink mute through audio.control (pulseaudio module click target).",
+  title = "Unified Bar: audio mute or detail",
+  description = "Toggle the default sink mute on left/middle; show the sink detail on right (pulseaudio module click target).",
   args_schema = {
     type = "object",
+    properties = click_properties({}),
     additionalProperties = false,
   },
-  run = function(_args)
-    return M.audio_toggle()
+  run = function(args)
+    local button = M.click_button(args)
+    if button == "right" then
+      return notify_detail(M.audio_detail(M.audio_snapshot()))
+    end
+    local toggled = M.audio_toggle()
+    if toggled then
+      pcall(render)
+    end
+    return toggled
   end,
 })
 
@@ -2734,21 +3830,146 @@ bitty.commands.register({
   description = "Step the default sink volume through audio.control (pulseaudio module wheel target; host-computed delta in signed lines).",
   args_schema = {
     type = "object",
-    properties = {
+    properties = click_properties({
       delta = { type = "number" },
-    },
+    }),
     required = { "delta" },
     additionalProperties = false,
   },
   run = function(args)
-    local delta = nil
-    local ok, raw = pcall(function()
-      return args.delta
-    end)
-    if ok then
-      delta = raw
+    return M.audio_step(M.command_arg(args, "delta"))
+  end,
+})
+
+-- Workspace actions (bar#30): one registered command serves the capsule
+-- region. Left focuses by stable id; the wheel (positive `delta` = wheel-up)
+-- moves to the previous workspace, negative to the next; middle/right show
+-- the workspace detail. Every path queues one bounded Core request at most.
+bitty.commands.register({
+  id = WORKSPACE_ACTION_COMMAND_ID,
+  title = "Unified Bar: workspace action",
+  description = "Focus, cycle, or show detail for a workspace capsule (bar#30 pointer target).",
+  args_schema = {
+    type = "object",
+    properties = click_properties({
+      id = { type = "number", minimum = 1 },
+      delta = { type = "number" },
+    }),
+    additionalProperties = false,
+  },
+  run = function(args)
+    local rows = bitty.workspace.list()
+    local button = M.click_button(args)
+    if button == "right" or button == "middle" then
+      return notify_detail(M.workspace_detail(rows, M.command_arg(args, "id")))
     end
-    return M.audio_step(delta)
+    local delta = M.command_arg(args, "delta")
+    if type(delta) == "number" then
+      local target = M.workspace_step_target(rows, delta)
+      if target == nil then
+        return false
+      end
+      return bitty.workspace.focus(target)
+    end
+    local target = M.focus_target(rows, M.command_arg(args, "id"))
+    if target == nil then
+      return false
+    end
+    return bitty.workspace.focus(target)
+  end,
+})
+
+-- Clock actions (bar#30): right cycles short/date/calendar text, middle shows
+-- the full local date-time, left is a no-op. The cycle repaints immediately so
+-- the new format is visible without waiting for the 60 s tick.
+bitty.commands.register({
+  id = CLOCK_ACTION_COMMAND_ID,
+  title = "Unified Bar: clock action",
+  description = "Cycle the clock format on right; show the date-time detail on middle (clock region target).",
+  args_schema = {
+    type = "object",
+    properties = click_properties({}),
+    additionalProperties = false,
+  },
+  run = function(args)
+    local button = M.click_button(args)
+    if button == "middle" then
+      return notify_detail(M.clock_detail(now_seconds()))
+    end
+    if button == "right" then
+      M.clock_cycle()
+      pcall(render)
+      return true
+    end
+    return false
+  end,
+})
+
+-- Network actions (bar#30): left/middle show the link detail. Right asks the
+-- optional `network.control` head to toggle the radio; when no head is
+-- present (the 0.0.26 provider set, which has no such interface) the same
+-- click degrades to the detail. Enabling it later needs a provider and the
+-- matching manifest declaration (the Lua call site stays unchanged).
+bitty.commands.register({
+  id = NETWORK_ACTION_COMMAND_ID,
+  title = "Unified Bar: network action",
+  description = "Show network detail on left/middle; toggle the radio on right when a control head is granted.",
+  args_schema = {
+    type = "object",
+    properties = click_properties({}),
+    additionalProperties = false,
+  },
+  run = function(args)
+    local button = M.click_button(args)
+    if button == "right" and M.network_toggle() then
+      pcall(render)
+      return true
+    end
+    local data = M.service_data(M.resolve_service(M.NETWORK_STATE_IFACE))
+    return notify_detail(M.network_text(data, M.essid_value(), {}))
+  end,
+})
+
+-- Microphone actions (bar#30): left/right toggle source mute, middle shows
+-- the detail, wheel steps input. The module is hidden on current providers
+-- (no source fields), and every control path fails closed when the control
+-- head lacks the optional source methods.
+bitty.commands.register({
+  id = MICROPHONE_ACTION_COMMAND_ID,
+  title = "Unified Bar: microphone mute or detail",
+  description = "Toggle source mute on left/right; show the microphone detail on middle (microphone region target).",
+  args_schema = {
+    type = "object",
+    properties = click_properties({}),
+    additionalProperties = false,
+  },
+  run = function(args)
+    local button = M.click_button(args)
+    if button == "middle" then
+      return notify_detail(M.microphone_tooltip(M.microphone_snapshot()))
+    end
+    local toggled = M.microphone_toggle()
+    if toggled then
+      pcall(render)
+    end
+    return toggled
+  end,
+})
+
+bitty.commands.register({
+  id = MICROPHONE_STEP_COMMAND_ID,
+  title = "Unified Bar: step microphone input",
+  description = "Step the source volume through audio.control when the optional source method is present (microphone wheel target).",
+  args_schema = {
+    type = "object",
+    properties = click_properties({
+      delta = { type = "number" },
+    }),
+    required = { "delta" },
+    additionalProperties = false,
+  },
+  run = function(args)
+    return M.microphone_step(M.command_arg(args, "delta"))
   end,
 })
 
@@ -2772,7 +3993,7 @@ bitty.events.subscribe("config.reloaded", function()
   local edge = opts.edge
   opts = M.read_settings(settings_get)
   opts.edge = edge
-  report_label_diagnostic(opts)
+  report_diagnostics(opts)
   -- Grants may have changed with the reload: drop negotiated handles so the
   -- next poll re-negotiates instead of serving a revoked generation.
   M._providers = {}

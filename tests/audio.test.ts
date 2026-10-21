@@ -272,6 +272,7 @@ describe("audio module registry and cadence (pure)", () => {
       "cpu",
       "idle",
       "memory",
+      "microphone",
       "network",
       "pulseaudio",
       "spectrum",
@@ -343,6 +344,7 @@ describe("pulseaudio module render (broker stubs)", () => {
     expect(leaf.on_click).toEqual({
       command: "bitty-terminal.bar:detail",
       args: { text: "p" },
+      region: { id: "pulseaudio", kind: "module" },
     });
     expect(leaf.on_scroll).toBeUndefined();
   });
@@ -355,8 +357,16 @@ describe("pulseaudio module render (broker stubs)", () => {
       audioControl: true,
     });
     const leaf = leaves(run.component())[0]!;
-    expect(leaf.on_click).toEqual({ command: TOGGLE_COMMAND, args: {} });
-    expect(leaf.on_scroll).toEqual({ command: STEP_COMMAND, args: {} });
+    expect(leaf.on_click).toEqual({
+      command: TOGGLE_COMMAND,
+      args: {},
+      region: { id: "pulseaudio", kind: "module" },
+    });
+    expect(leaf.on_scroll).toEqual({
+      command: STEP_COMMAND,
+      args: {},
+      region: { id: "pulseaudio", kind: "module" },
+    });
   });
 
   test("click dispatch toggles mute through the control head", async () => {

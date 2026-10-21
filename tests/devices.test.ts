@@ -245,6 +245,7 @@ describe("bluetooth module (bitty#2017)", () => {
       args: {
         text: "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
       },
+      region: { id: "bluetooth", kind: "module" },
     });
     expect(
       run.host.dispatchCommand("bitty-terminal.bar:detail", {
@@ -285,6 +286,7 @@ describe("bluetooth module (bitty#2017)", () => {
       args: {
         text: "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
       },
+      region: { id: "bluetooth", kind: "module" },
     });
     expect(
       run.host.dispatchCommand("bitty-terminal.bar:bluetooth-toggle"),
