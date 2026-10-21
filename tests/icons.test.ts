@@ -150,6 +150,16 @@ describe("icon maps (pure)", () => {
     // The ascii clock entry is the empty string.
     expect(fallback).toBe("");
   });
+
+  test("a non-string icons value falls back to ascii with a diagnostic", () => {
+    const opts = mod["read_settings"]((key: string) =>
+      key === "icons" ? 42 : undefined,
+    );
+    expect(opts.icons).toBe("ascii");
+    expect(opts.icons_diagnostic).toBe(
+      "Unified Bar: unknown icons number; using 'ascii'.",
+    );
+  });
 });
 
 describe("display-cell width (pure)", () => {
@@ -168,6 +178,16 @@ describe("display-cell width (pure)", () => {
     // A replacement character is also one cell, so a fontless terminal cannot
     // shift the columns after the glyph.
     expect(mod["display_cells"]("\uFFFD")).toBe(1);
+  });
+
+  test("ambiguous-width symbols keep the one-cell default", () => {
+    // East-Asian-Ambiguous symbols are one cell in the default (non-CJK)
+    // locale, matching the declared PUA/Font Awesome width policy.
+    expect(mod["display_cells"]("\u00B1")).toBe(1);
+    expect(mod["display_cells"]("\u00A1")).toBe(1);
+    expect(mod["display_cells"]("\u2192")).toBe(1);
+    // A fullwidth Latin letter is East-Asian Wide and takes two cells.
+    expect(mod["display_cells"]("\uFF21")).toBe(2);
   });
 
   test("truncate_cells cuts on code-point boundaries and never splits a wide glyph", () => {

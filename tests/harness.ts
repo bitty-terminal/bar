@@ -187,6 +187,18 @@ export interface BarRunOptions {
    * provider exposes sink control only, so this models a future head.
    */
   readonly audioSourceControl?: boolean;
+  /**
+   * Which optional source methods the stub serves when `audioSourceControl`
+   * is true. Defaults to both; a subset models a partial head that must stay
+   * read-only under `microphone_control_present`.
+   */
+  readonly audioSourceMethods?: readonly ("toggle" | "step")[];
+  /**
+   * Result object returned by the optional source methods (default
+   * `{ ok: true }`). Use `{ ok: false }` or `false` to model a non-throwing
+   * denial and prove the plugin checks the result shape.
+   */
+  readonly audioSourceResult?: unknown;
 }
 
 /** Plain service implementation: method name to function. */
@@ -347,6 +359,13 @@ export async function activateBar(
   const audioSpectrum = options.audioSpectrum;
   const audioControl = options.audioControl === true;
   const audioSourceControl = options.audioSourceControl === true;
+  const audioSourceMethods = new Set(
+    options.audioSourceMethods ?? ["toggle", "step"],
+  );
+  const audioSourceResult =
+    options.audioSourceResult === undefined
+      ? { ok: true }
+      : options.audioSourceResult;
   const mockServicesGet = (
     bridged.services as { readonly get: (...args: unknown[]) => unknown }
   ).get;
@@ -406,16 +425,20 @@ export async function activateBar(
         },
       };
       if (audioSourceControl) {
-        control.toggle_source_mute = (): unknown => {
-          controlCalls.sourceToggles += 1;
-          return { ok: true };
-        };
-        control.set_source_volume = (args?: unknown): unknown => {
-          controlCalls.sourceSteps.push(
-            (args as Record<string, unknown> | undefined)?.["delta"],
-          );
-          return { ok: true };
-        };
+        if (audioSourceMethods.has("toggle")) {
+          control.toggle_source_mute = (): unknown => {
+            controlCalls.sourceToggles += 1;
+            return audioSourceResult;
+          };
+        }
+        if (audioSourceMethods.has("step")) {
+          control.set_source_volume = (args?: unknown): unknown => {
+            controlCalls.sourceSteps.push(
+              (args as Record<string, unknown> | undefined)?.["delta"],
+            );
+            return audioSourceResult;
+          };
+        }
       }
       return control;
     }

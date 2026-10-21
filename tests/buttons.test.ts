@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   activateBar,
+  BAR_CAPABILITIES,
   leaves,
   MANIFEST_SOURCE,
   textOf,
@@ -54,6 +55,17 @@ function leafFor(run: BarRun, text: string) {
   const leaf = leaves(run.component()).find((entry) => entry.text === text);
   if (leaf === undefined) {
     throw new Error(`no leaf with text ${JSON.stringify(text)}`);
+  }
+  return leaf;
+}
+
+/** Leaf carrying the named module region. */
+function regionLeaf(run: BarRun, id: string) {
+  const leaf = leaves(run.component()).find(
+    (entry) => entry.on_click?.region?.id === id,
+  );
+  if (leaf === undefined) {
+    throw new Error(`no leaf with region ${id}`);
   }
   return leaf;
 }
@@ -105,6 +117,24 @@ describe("workspace buttons", () => {
     ]);
     expect(run.host.dispatchCommand(ACTION, { delta: 0 })).toBe(false);
     expect(run.host.dispatchCommand(ACTION, { delta: 0.5 })).toBe(false);
+  });
+
+  test("the wheel wraps previous from the first and next from the last", async () => {
+    const first = await bar({
+      workspaces: [ws(1, "ws1", true), ws(4, "code"), ws(9, "logs")],
+    });
+    expect(first.host.dispatchCommand(ACTION, { delta: 1 })).toBe(true);
+    expect(first.host.drainWorkspaceRequests()).toEqual([
+      { kind: "focus_id", id: 9 },
+    ]);
+
+    const last = await bar({
+      workspaces: [ws(1, "ws1"), ws(4, "code"), ws(9, "logs", true)],
+    });
+    expect(last.host.dispatchCommand(ACTION, { delta: -1 })).toBe(true);
+    expect(last.host.drainWorkspaceRequests()).toEqual([
+      { kind: "focus_id", id: 1 },
+    ]);
   });
 
   test("the wheel follows the painted numeric id order, not input order", async () => {
@@ -203,7 +233,7 @@ describe("network buttons", () => {
     ]);
   });
 
-  test("right toggles the radio when a control head resolves", async () => {
+  test("right toggles through the mock-only forward control stub", async () => {
     const calls: unknown[] = [];
     const run = await bar({
       workspaces: THREE,
@@ -224,6 +254,24 @@ describe("network buttons", () => {
     expect(run.host.dispatchCommand(NETWORK, { button: "right" })).toBe(true);
     expect(calls).toEqual([false]);
     expect(run.host.notifications).toEqual([]);
+  });
+
+  test("right falls back to detail when the mock control result denies", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["network"] },
+      services: {
+        "network.state": { version: "1.0.0", impl: NETWORK_STATE },
+        "network.control": {
+          version: "1.0.0",
+          impl: { set_power: () => ({ ok: false }) },
+        },
+      },
+    });
+    expect(run.host.dispatchCommand(NETWORK, { button: "right" })).toBe(true);
+    expect(run.host.notifications.map((entry) => entry.body)).toEqual([
+      "wifi 8.0K/4.0K",
+    ]);
   });
 
   test("the atom carries the network region", async () => {
@@ -364,6 +412,41 @@ describe("microphone buttons", () => {
     expect(run.audioControl().sourceToggles).toBe(0);
   });
 
+  test("a partial source head stays read-only and the command is gated", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["microphone"] },
+      audioState: SOURCE,
+      audioControl: true,
+      audioSourceControl: true,
+      audioSourceMethods: ["toggle"],
+    });
+    const leaf = leaves(run.component())[0]!;
+    expect(leaf.on_click?.command).toBe(DETAIL);
+    expect(leaf.on_scroll).toBeUndefined();
+    expect(run.host.dispatchCommand(MICROPHONE, { button: "left" })).toBe(
+      false,
+    );
+    expect(run.audioControl().sourceToggles).toBe(0);
+  });
+
+  test("a non-throwing source denial is honored by toggle and step", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["microphone"] },
+      audioState: SOURCE,
+      audioControl: true,
+      audioSourceControl: true,
+      audioSourceResult: { ok: false },
+    });
+    expect(run.host.dispatchCommand(MICROPHONE, { button: "left" })).toBe(
+      false,
+    );
+    expect(run.host.dispatchCommand(MICROPHONE_STEP, { delta: 3 })).toBe(false);
+    expect(run.audioControl().sourceToggles).toBe(1);
+    expect(run.audioControl().sourceSteps).toEqual([3]);
+  });
+
   test("a muted source paints the muted icon", async () => {
     const run = await bar({
       workspaces: THREE,
@@ -376,7 +459,73 @@ describe("microphone buttons", () => {
   });
 });
 
+describe("sensor regions", () => {
+  test("cpu, memory, and battery expose their region and detail on every button", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: { modules_left: ["cpu", "memory", "battery"] },
+      grants: [
+        ...BAR_CAPABILITIES,
+        "platform.cpu-read",
+        "platform.memory-read",
+        "platform.battery-read",
+      ],
+      services: {
+        "system.cpu": {
+          snapshot: { total_pct: 25, per_core: [25] },
+        },
+        "system.memory": {
+          snapshot: { pct: 50, used_gib: 4, total_gib: 8 },
+        },
+        "system.battery": {
+          snapshot: { capacity_pct: 50, state: "discharging" },
+        },
+      },
+    });
+
+    for (const id of ["cpu", "memory", "battery"]) {
+      const leaf = regionLeaf(run, id);
+      expect(leaf.on_click?.command).toBe(DETAIL);
+      expect(leaf.on_click?.region).toEqual({ id, kind: "module" });
+      expect(leaf.on_scroll).toBeUndefined();
+      const args = leaf.on_click?.args as Record<string, unknown>;
+      expect(
+        run.host.dispatchCommand(DETAIL, { ...args, button: "right" }),
+      ).toBe(true);
+    }
+    expect(run.host.notifications.map((entry) => entry.body)).toEqual([
+      "CPU 25% (1 cores)",
+      "Memory 4/8 GiB (50%)",
+      "Battery 50% discharging",
+    ]);
+  });
+});
+
 describe("command schema and registration", () => {
+  test("every region-aware command rejects non-workspace schema violations", async () => {
+    const run = await bar({ workspaces: THREE });
+    const bases: ReadonlyArray<[string, Record<string, unknown>]> = [
+      [ACTION, { id: 1 }],
+      [CLOCK, {}],
+      [NETWORK, {}],
+      [AUDIO_TOGGLE, {}],
+      [AUDIO_STEP, { delta: 1 }],
+      [MICROPHONE, {}],
+      [MICROPHONE_STEP, { delta: 1 }],
+      [DETAIL, { text: "detail" }],
+    ];
+    for (const [command, base] of bases) {
+      for (const bad of [
+        { ...base, button: "back" },
+        { ...base, button: 1 },
+        { ...base, region: "x".repeat(65) },
+        { ...base, unexpected: true },
+      ]) {
+        expect(() => run.host.dispatchCommand(command, bad)).toThrow();
+      }
+    }
+  });
+
   test("an unknown button spelling is rejected by the host schema", async () => {
     const run = await bar({ workspaces: THREE });
     expect(() =>
@@ -407,6 +556,32 @@ describe("command schema and registration", () => {
         const verb = binding.command.split(":").at(-1)!;
         expect(declared.has(verb)).toBe(true);
       }
+    }
+  });
+
+  test("every manifest lazy command is registered and dispatchable", async () => {
+    const block = /commands = \[([\s\S]*?)\]/.exec(MANIFEST_SOURCE)?.[1];
+    expect(block).toBeDefined();
+    const commands = [
+      ...(block as string).matchAll(/"bitty-terminal\.bar:([a-z-]+)"/g),
+    ].map((match) => match[1]!);
+    expect(commands.length).toBeGreaterThan(0);
+
+    const argsByCommand: Readonly<Record<string, Record<string, unknown>>> = {
+      focus: { id: 1 },
+      detail: { text: "detail" },
+      "backlight-step": { delta: 5 },
+      "audio-step": { delta: 1 },
+      "microphone-step": { delta: 1 },
+    };
+    const run = await bar({ workspaces: THREE });
+    for (const command of commands) {
+      expect(() =>
+        run.host.dispatchCommand(
+          `bitty-terminal.bar:${command}`,
+          argsByCommand[command] ?? {},
+        ),
+      ).not.toThrow();
     }
   });
 });

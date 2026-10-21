@@ -1894,12 +1894,34 @@ function M.network_atoms(ctx)
 end
 
 -- Optional network control head (bar#30 "right toggles the Wi-Fi radio when
--- granted"). The 0.0.26 provider set serves no network control interface, so
--- this negotiation resolves nil and the right click degrades to the detail
--- notification. A future provider still needs the matching manifest
--- `[services.required]` entry (and a capability head); this probe is the
--- forward-compatible call site only.
+-- granted"). This is a forward-looking stub, not a live provider: it is not
+-- declared in the manifest `[services.required]`, no provider ships in
+-- 0.0.26, and only the test harness serves it. A real provider must add the
+-- service and capability declaration first; this probe stays the
+-- forward-compatible call site.
 M.NETWORK_CONTROL_IFACE = "network.control"
+
+-- Whether one control call was admitted. A throw is denial (pcall false), as
+-- is an explicit `false` or a result table with `ok == false`; any other
+-- successful result (including nil or `{ ok = true }`) is admission, matching
+-- providers that return no payload. Throw-based denial behavior is unchanged.
+function M.control_admitted(ok, result)
+  if ok ~= true then
+    return false
+  end
+  if result == false then
+    return false
+  end
+  if type(result) == "table" or type(result) == "userdata" then
+    local read_ok, flag = pcall(function()
+      return result.ok
+    end)
+    if read_ok and flag == false then
+      return false
+    end
+  end
+  return true
+end
 
 -- Flips the radio through an optional control head. Returns true only when a
 -- control method admitted the call; every absent/denied path returns false and
@@ -1920,8 +1942,8 @@ function M.network_toggle()
     return false
   end
   local target = data.link == "disabled"
-  local called = pcall(set_power, target)
-  return called == true
+  local called, result = pcall(set_power, target)
+  return M.control_admitted(called, result)
 end
 
 -- Bluetooth icon for a validated snapshot: connected (powered with at least
@@ -2764,17 +2786,23 @@ function M.microphone_control_present()
     and M.microphone_control_method("set_source_volume") ~= nil
 end
 
--- Toggle source mute. True only on an admitted call.
+-- Toggle source mute. True only on a call admitted by the shared
+-- `microphone_control_present` predicate and by the result check.
 function M.microphone_toggle()
+  if not M.microphone_control_present() then
+    return false
+  end
   local method = M.microphone_control_method("toggle_source_mute")
   if method == nil then
     return false
   end
-  local called = pcall(method, {})
-  return called == true
+  local called, result = pcall(method, {})
+  return M.control_admitted(called, result)
 end
 
--- Step source volume with the same bounded delta policy as the sink.
+-- Step source volume with the same bounded delta policy as the sink. The
+-- module only binds the wheel when both source methods exist, but a direct
+-- invocation still requires `set_source_volume` and an admitted result.
 function M.microphone_step(delta)
   local step = M.volume_step(delta)
   if step == nil then
@@ -2784,8 +2812,8 @@ function M.microphone_step(delta)
   if method == nil then
     return false
   end
-  local called = pcall(method, { delta = step })
-  return called == true
+  local called, result = pcall(method, { delta = step })
+  return M.control_admitted(called, result)
 end
 
 -- Microphone module render: one atom from the source fields, or {} when the
@@ -3947,6 +3975,11 @@ bitty.commands.register({
     local button = M.click_button(args)
     if button == "middle" then
       return notify_detail(M.microphone_tooltip(M.microphone_snapshot()))
+    end
+    -- Same predicate as the render binding: a head with only one source
+    -- method stays read-only, even for a direct palette/keymap invocation.
+    if not M.microphone_control_present() then
+      return false
     end
     local toggled = M.microphone_toggle()
     if toggled then

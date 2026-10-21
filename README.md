@@ -71,27 +71,27 @@ user-owned; the plugin never writes settings.
 
 | Key              | Type         | Default                                | Description                                                                                                                        | Applies         |
 | ---------------- | ------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                           | Next activation |
+| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                           | Live            |
 | `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                       | Next activation |
-| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Next activation |
-| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Next activation |
-| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Next activation |
-| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, or `"nerd"`; an unknown value falls back to `"ascii"`.                   | Next activation |
-| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group.                                                                                           | Next activation |
-| `modules_center` | string array | `["clock"]`                            | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Next activation |
-| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Next activation |
-| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Next activation |
-| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                        | Next activation |
-| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                      | Next activation |
-| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Next activation |
-| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Next activation |
-| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                         | Next activation |
-| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Next activation |
-| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                   | Next activation |
-| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Next activation |
-| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Next activation |
-| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                       | Next activation |
-| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                      | Next activation |
+| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Live            |
+| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Live            |
+| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Live            |
+| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, or `"nerd"`; an unknown value falls back to `"ascii"`.                   | Live            |
+| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group.                                                                                           | Live            |
+| `modules_center` | string array | `["clock"]`                            | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Live            |
+| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Live            |
+| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Live            |
+| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                        | Live            |
+| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                      | Live            |
+| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Live            |
+| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Live            |
+| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                         | Live            |
+| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Live            |
+| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                   | Live            |
+| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Live            |
+| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Live            |
+| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                       | Live            |
+| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                      | Live            |
 
 ```lua
 -- $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
@@ -122,11 +122,13 @@ order. True left/center/right alignment needs a Core spacer/flex or anchor
 node (bitty-terminal/bitty#2411); the bar deliberately does not simulate it
 with padding strings.
 
-The host resolves plugin settings at activation and pins them to that
-generation; `config.reloaded` re-renders with the pinned values, so edit the
-file and reopen Bitty to apply a change. `edge` can only change on a new
-activation because `bitty.ui.mount` is valid only during activation and v1 has
-no unmount or move.
+The host parses plugin settings at activation; `config.reloaded` re-reads
+them and re-renders, so `show`, labels, icons, and the module plan update
+without reopening Bitty. On v1 hosts, timer cadences already armed at
+activation are not re-chained, so a cadence change waits for a new generation.
+`edge` can only
+change on a new activation because `bitty.ui.mount` is valid only during
+activation and v1 has no unmount or move.
 
 ## Keybindings
 
@@ -196,8 +198,9 @@ workspace; bind other bar commands or use the click targets.
   and the wheel steps to the previous (wheel-up) or next workspace, wrapping
   at both ends.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
-  event and re-renders on `config.reloaded`; settings themselves are pinned to
-  the activation generation.
+  event and re-renders on `config.reloaded`, which re-reads the settings;
+  only `edge` stays pinned to the activation generation because the mount
+  slot cannot move.
 
 ### Modules (declarative)
 
@@ -264,7 +267,10 @@ coordinates; a click on that span dispatches the registered command with the
 host-injected `button` (`left`/`right`/`middle`) and `region`, and a wheel
 merges the host-computed `delta`. Clicks and wheel steps therefore remain
 registered-command-only: `on-click` shell strings are not a vehicle and can
-never reach the scene.
+never reach the scene. Right/middle region dispatch needs Core #2248 (Bitty
+0.0.26); on the 0.0.24/0.0.25 hosts the region key is ignored and left-click
+and wheel routing keep working, which is why the `[compat]` floor stays at
+0.0.24.
 
 | Module                                     | Left                | Middle                | Right                      | Wheel                        |
 | ------------------------------------------ | ------------------- | --------------------- | -------------------------- | ---------------------------- |
@@ -276,17 +282,21 @@ never reach the scene.
 | `cpu`, `memory`, `battery`                 | Detail              | Detail                | Detail                     | —                            |
 | read-only `bluetooth`, `backlight`, `idle` | Detail³             | Detail³               | Detail³                    | —                            |
 
-¹ The 0.0.26 provider set serves no network control head, so the right click
-degrades to the link detail. A future provider also
-needs the matching manifest declaration.
+¹ `network.control` is a forward-looking stub, not a live guarantee: it is not
+declared in `[services.required]`, no provider ships in 0.0.26, and only the
+mock harness exercises the toggle path. On a live host the right click
+degrades to the link detail; a real provider must add the service and
+capability declaration first.
 
 ² The audio provider exposes sink control only; source mute/step methods are
 probed optionally and an absent method fails closed. The microphone module
 itself also hides until the provider reports source fields.
 
 ³ With its control head granted, the left click keeps the existing toggle/step
-behavior (`bluetooth-toggle`, `backlight-step`, `idle-toggle`); the detail
-fallback applies while the module is read-only.
+behavior (`bluetooth-toggle`, `backlight-step`, `idle-toggle`). While read-only,
+`bluetooth` binds the bonded-device detail whenever its snapshot carries
+devices, but `backlight` and `idle` bind detail only when their `tooltip`
+option is set; without that option the atom is non-interactive.
 
 Hover is still the v1 fallback: a module with detail text but no command binds
 `bitty-terminal.bar:detail`, which shows a notification. Real hover tooltips
@@ -305,13 +315,16 @@ and are not faked with notifications here.
   present in most patched fonts.
 - `"nerd"` uses Nerd Fonts v3 Material Design glyphs (`nf-md-*`).
 
-The maps cover the clock, the network link kinds (Wi-Fi strength ladder,
-ethernet, disconnected, disabled), Bluetooth (off/on/connected), audio device
-classes (speaker/headphones/headset/HDMI/USB/Bluetooth) and muted state,
-microphone (on/muted), cpu, memory, and the battery charging/discharging
-ladders plus `full`. The network snapshot carries no signal strength in
-0.0.26, so Wi-Fi renders the top ladder rung; a future `signal_pct` field
-selects the real rung without a bar change.
+The maps cover the clock, the network link kinds (a four-rung Wi-Fi strength
+ladder in `nerd`; `pua` repeats one Font Awesome Wi-Fi glyph, so it is not a
+strength ladder), ethernet, disconnected, disabled, Bluetooth
+(off/on/connected), audio device classes
+(speaker/headphones/headset/HDMI/USB/Bluetooth) and muted state, microphone
+(on/muted), cpu, memory, and the battery charging/discharging ladders plus the
+`full` state. `battery_full` is the same glyph as the top ladder rung in every
+set. The network snapshot carries no signal strength in 0.0.26, so Wi-Fi
+renders the top ladder rung; a future `signal_pct` field selects the real rung
+without a bar change.
 
 Width is measured in **display cells**, never UTF-8 bytes: combining marks
 take 0, CJK/emoji take 2, and Nerd Font private-use glyphs take their declared
@@ -369,9 +382,10 @@ narrowed grant takes effect without restart.
   when the separately-granted `network.essid` sub-interface resolves
   (`wifi 8.0K/4.0K (Home)`); otherwise the key is absent and the rest is
   unaffected. The `network` region routes every button: left/middle show the
-  link detail, right toggles the radio when a `network.control` head resolves
-  (none ships in 0.0.26, so right falls back to detail; a future provider also
-  needs the matching manifest declaration).
+  link detail, and right asks the forward-looking `network.control` stub to
+  toggle the radio. That interface is not declared in `[services.required]`
+  and no provider ships in 0.0.26, so a live right click falls back to detail;
+  the toggle path is mock-tested only.
   Options: `format` (`{icon}`, `{link}`, `{down}`, `{up}`, `{essid}`),
   `tick_ms` (clamped at or above 3 s), `tooltip` (reserved; live detail wins).
 - `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
@@ -431,12 +445,12 @@ raw numbers and states only:
 
 With `icons = "ascii"`, battery icons are five ASCII buckets by capacity
 (`[    ]` through `[====]`) with a `+` mark while charging. The `pua` and
-`nerd` maps swap in native charging/discharging ladders and a distinct full
-glyph; the ASCII ladder is unchanged. Only a discharging battery alarms on
-low capacity; `full`, `charging`, `plugged`, and `unknown` render the icon
-with the default presentation. Bar visibility stays workspace-driven (a lone
-workspace still hides the bar unless `show_single` is set); sensor-only plans
-inherit that rule.
+`nerd` maps swap in native charging/discharging ladders; `battery_full` is
+the same glyph as the top ladder rung, not a separate glyph. Only a
+discharging battery alarms on low capacity; `full`, `charging`, `plugged`,
+and `unknown` render the icon with the default presentation. Bar visibility
+stays workspace-driven (a lone workspace still hides the bar unless
+`show_single` is set); sensor-only plans inherit that rule.
 
 **Activation (landed, CTX-1226).** The manifest declares `[services.required]`
 for `system.cpu`/`system.memory`/`system.battery` at `^1.0` (plus the device
@@ -529,8 +543,10 @@ Gaps in the current host and provider set, not in this plugin:
 - The 0.0.26 audio provider reports no source (microphone) level/mute and
   exposes no source control, so the `microphone` module hides and its
   commands fail closed until that provider surface lands.
-- No `network.control` provider ships in 0.0.26, so the network right click
-  degrades to the link detail instead of toggling the radio.
+- `network.control` is a forward-looking stub: not declared in
+  `[services.required]`, no provider ships in 0.0.26, and only the mock
+  harness exercises the toggle path, so the live right click degrades to the
+  link detail.
 - Band painting ignores `fg`, `bg`, and `bold`. The active capsule stays
   identifiable through the `*` mark.
 - Plugin bands reserve no exclusive zone. They overlay the edge content row
