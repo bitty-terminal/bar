@@ -124,8 +124,9 @@ with padding strings.
 
 The host parses plugin settings at activation; `config.reloaded` re-reads
 them and re-renders, so `show`, labels, icons, and the module plan update
-without reopening Bitty. Timer cadences already armed at activation are not
-re-chained, so a cadence change waits for a new generation. `edge` can only
+without reopening Bitty. On v1 hosts, timer cadences already armed at
+activation are not re-chained, so a cadence change waits for a new generation.
+`edge` can only
 change on a new activation because `bitty.ui.mount` is valid only during
 activation and v1 has no unmount or move.
 
