@@ -106,8 +106,8 @@ audio.spectrum = true
 #   in `M.read_settings` own the fallback (an unknown value paints `index`
 #   and reports one bounded diagnostic).
 # - Per-module option collections (`workspaces`, `clock`, `network`,
-#   `bluetooth`, `backlight`, `idle`, `pulseaudio`, `spectrum`, `cpu`,
-#   `memory`, `battery`) are read as one table per module name
+#   `bluetooth`, `backlight`, `idle`, `pulseaudio`, `microphone`, `spectrum`,
+#   `cpu`, `memory`, `battery`) are read as one table per module name
 #   (`M.module_options`). The v1 settings contract has no table or dot-path
 #   form (host `SettingKind`, SDK closed types, flat file grammar), so each
 #   is declared `string-array` with an empty default: unset reads serve []
@@ -117,11 +117,17 @@ audio.spectrum = true
 #   follow-up lands host- and SDK-side; no Lua change is needed when it
 #   does (the reads already tolerate absent tables). Types and bounds mirror
 #   the host `SettingDecl::validate` via the SDK#152 linter.
+# - `icons` selects the module icon map: `ascii` (default; byte-identical to
+#   the historical output), `pua` (legacy Font Awesome private-use glyphs),
+#   or `nerd` (Nerd Fonts v3 Material Design glyphs). An unknown value paints
+#   `ascii` and reports one bounded diagnostic. Glyphs stay opt-in because a
+#   terminal without the font paints replacement boxes.
 show = { type = "bool", default = true }
 edge = { type = "string", default = "bottom" }
 show_single = { type = "bool", default = false }
 name_max_chars = { type = "int", default = 32 }
 label = { type = "string", default = "index" }
+icons = { type = "string", default = "ascii" }
 modules_left = { type = "string-array", default = ["workspaces"] }
 modules_center = { type = "string-array", default = ["clock"] }
 modules_right = { type = "string-array", default = ["network", "cpu", "memory", "battery"] }
@@ -132,6 +138,7 @@ bluetooth = { type = "string-array", default = [] }
 backlight = { type = "string-array", default = [] }
 idle = { type = "string-array", default = [] }
 pulseaudio = { type = "string-array", default = [] }
+microphone = { type = "string-array", default = [] }
 spectrum = { type = "string-array", default = [] }
 cpu = { type = "string-array", default = [] }
 memory = { type = "string-array", default = [] }
@@ -140,13 +147,18 @@ battery = { type = "string-array", default = [] }
 [lazy]
 # Static triggers let the host register the plugin without creating a VM.
 # Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` is the
-# click target bound to every inactive workspace pill; `detail` is the
-# tooltip→notify fallback bound to a module's detail text; the
-# `bluetooth-toggle`, `backlight-step`, and `idle-toggle` commands are the
-# device-module control click targets (each calls exactly one control method
-# on its own control interface, never anything else); `audio-toggle`
-# mutes via audio.control (pulseaudio click) and `audio-step` steps the
-# volume via audio.control (pulseaudio wheel, host-computed `delta`).
+# click target bound to every workspace capsule (left focus, wheel cycle,
+# middle/right detail); `detail` is the tooltip→notify fallback bound to a
+# module's detail text; the `bluetooth-toggle`, `backlight-step`, and
+# `idle-toggle` commands are the device-module control click targets (each
+# calls exactly one control method on its own control interface, never
+# anything else); `audio-toggle` mutes on left/middle and shows the sink
+# detail on right; `audio-step` steps the volume (pulseaudio wheel,
+# host-computed `delta`); `workspace-action`, `clock-action`,
+# `network-action`, `microphone-action`, and `microphone-step` are the
+# bar#30 per-button region targets. Every pointer target dispatches one of
+# these registered commands with the host-injected `button`/`region`/`delta`
+# arguments; no shell string is accepted.
 commands = [
   "bitty-terminal.bar:focus",
   "bitty-terminal.bar:detail",
@@ -155,6 +167,11 @@ commands = [
   "bitty-terminal.bar:idle-toggle",
   "bitty-terminal.bar:audio-toggle",
   "bitty-terminal.bar:audio-step",
+  "bitty-terminal.bar:workspace-action",
+  "bitty-terminal.bar:clock-action",
+  "bitty-terminal.bar:network-action",
+  "bitty-terminal.bar:microphone-action",
+  "bitty-terminal.bar:microphone-step",
 ]
 events = [
   "workspace.created",

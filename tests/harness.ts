@@ -48,10 +48,18 @@ export interface SceneNode {
   readonly on_click?: {
     readonly command: string;
     readonly args?: Readonly<Record<string, unknown>>;
+    readonly region?: {
+      readonly id: string;
+      readonly kind: string;
+    };
   };
   readonly on_scroll?: {
     readonly command: string;
     readonly args?: Readonly<Record<string, unknown>>;
+    readonly region?: {
+      readonly id: string;
+      readonly kind: string;
+    };
   };
 }
 
@@ -113,6 +121,8 @@ export interface BarRun {
   audioControl(): {
     readonly toggles: number;
     readonly steps: readonly unknown[];
+    readonly sourceToggles: number;
+    readonly sourceSteps: readonly unknown[];
   };
   /** Number of `audio.spectrum.spectrum()` calls the plugin issued. */
   audioSpectrumCalls(): number;
@@ -124,6 +134,9 @@ export interface AudioStateFixture {
   readonly volume_pct: number;
   readonly muted: boolean;
   readonly port: string;
+  /** Optional source (microphone) fields; absent models the live reader. */
+  readonly source_volume_pct?: number;
+  readonly source_muted?: boolean;
   readonly stale_age_ms?: number;
 }
 
@@ -168,6 +181,12 @@ export interface BarRunOptions {
   readonly audioSpectrum?: readonly number[];
   /** True = stub `audio.control` serves toggle/step and records calls. */
   readonly audioControl?: boolean;
+  /**
+   * True = the `audio.control` stub also serves the optional source
+   * (microphone) methods `toggle_source_mute` / `set_source_volume`. The live
+   * provider exposes sink control only, so this models a future head.
+   */
+  readonly audioSourceControl?: boolean;
 }
 
 /** Plain service implementation: method name to function. */
@@ -314,15 +333,20 @@ export async function activateBar(
   const controlCalls: {
     toggles: number;
     steps: unknown[];
+    sourceToggles: number;
+    sourceSteps: unknown[];
     spectrum: number;
   } = {
     toggles: 0,
     steps: [],
+    sourceToggles: 0,
+    sourceSteps: [],
     spectrum: 0,
   };
   const audioState = options.audioState;
   const audioSpectrum = options.audioSpectrum;
   const audioControl = options.audioControl === true;
+  const audioSourceControl = options.audioSourceControl === true;
   const mockServicesGet = (
     bridged.services as { readonly get: (...args: unknown[]) => unknown }
   ).get;
@@ -333,12 +357,18 @@ export async function activateBar(
     // (then the mock directory).
     if (iface === "audio.state") {
       if (audioState === undefined) return undefined;
-      const snapshot = {
+      const snapshot: Record<string, unknown> = {
         volume_pct: audioState.volume_pct,
         muted: audioState.muted,
         port: audioState.port,
         stale_age_ms: audioState.stale_age_ms ?? 0,
       };
+      if (audioState.source_volume_pct !== undefined) {
+        snapshot.source_volume_pct = audioState.source_volume_pct;
+      }
+      if (audioState.source_muted !== undefined) {
+        snapshot.source_muted = audioState.source_muted;
+      }
       return {
         get: (): unknown => ({ ...snapshot }),
       };
@@ -363,7 +393,7 @@ export async function activateBar(
     }
     if (iface === "audio.control") {
       if (!audioControl) return undefined;
-      return {
+      const control: Record<string, unknown> = {
         toggle_mute: (): unknown => {
           controlCalls.toggles += 1;
           return { ok: true };
@@ -375,6 +405,19 @@ export async function activateBar(
           return { ok: true };
         },
       };
+      if (audioSourceControl) {
+        control.toggle_source_mute = (): unknown => {
+          controlCalls.sourceToggles += 1;
+          return { ok: true };
+        };
+        control.set_source_volume = (args?: unknown): unknown => {
+          controlCalls.sourceSteps.push(
+            (args as Record<string, unknown> | undefined)?.["delta"],
+          );
+          return { ok: true };
+        };
+      }
+      return control;
     }
     const stub = stubbed[iface];
     if (stub === undefined) {
@@ -474,8 +517,15 @@ export async function activateBar(
     audioControl(): {
       readonly toggles: number;
       readonly steps: readonly unknown[];
+      readonly sourceToggles: number;
+      readonly sourceSteps: readonly unknown[];
     } {
-      return { toggles: controlCalls.toggles, steps: [...controlCalls.steps] };
+      return {
+        toggles: controlCalls.toggles,
+        steps: [...controlCalls.steps],
+        sourceToggles: controlCalls.sourceToggles,
+        sourceSteps: [...controlCalls.sourceSteps],
+      };
     },
     audioSpectrumCalls(): number {
       return controlCalls.spectrum;

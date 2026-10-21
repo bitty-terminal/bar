@@ -42,18 +42,26 @@ granted capabilities. A disabled entry carries a `disabled_reason`; see
 
 ## Commands
 
-| Command                               | What it does                                                                                    | Arguments                                 | Default keybinding  |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------- |
-| `bitty-terminal.bar:focus`            | Focus a workspace by stable id; the click target for every inactive capsule.                    | `id` (integer, required, `>= 1`)          | None (click target) |
-| `bitty-terminal.bar:detail`           | Show a module's detail text as a notification (the tooltip fallback).                           | `text` (string, required, max 1024 bytes) | None (click target) |
-| `bitty-terminal.bar:bluetooth-toggle` | Flip Bluetooth radio power through `bluetooth.control`; degrades to a notification when denied. | None                                      | None (click target) |
-| `bitty-terminal.bar:backlight-step`   | Step backlight brightness by `delta` percent points through `backlight.control`.                | `delta` (number, required, `-100..100`)   | None (click target) |
-| `bitty-terminal.bar:idle-toggle`      | Flip idle inhibition through `idle.control`; degrades to a notification when denied.            | None                                      | None (click target) |
-| `bitty-terminal.bar:audio-toggle`     | Toggle mute on the default sink through `audio.control`.                                        | None                                      | None (click target) |
-| `bitty-terminal.bar:audio-step`       | Step the default sink volume; `delta` is a host-computed signed line count.                     | `delta` (number, required)                | None (wheel target) |
+| Command                                | What it does                                                                                              | Arguments                                              | Default keybinding  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------- |
+| `bitty-terminal.bar:focus`             | Focus a workspace by stable id (public command; capsule clicks use `workspace-action`).                   | `id` (integer, required, `>= 1`)                       | None (click target) |
+| `bitty-terminal.bar:detail`            | Show a module's detail text as a notification (the tooltip fallback).                                     | `text` (string, required, max 1024 bytes)              | None (click target) |
+| `bitty-terminal.bar:workspace-action`  | Capsule target: left focuses, wheel cycles previous/next, middle/right show the workspace detail.         | `id?`, `delta?` plus host-injected `button`/`region`   | None (click target) |
+| `bitty-terminal.bar:clock-action`      | Clock target: right cycles short/date/calendar, middle shows the full date-time, left is a no-op.         | host-injected `button`/`region`                        | None (click target) |
+| `bitty-terminal.bar:network-action`    | Network target: left/middle show the link detail; right toggles the radio when a control head is granted. | host-injected `button`/`region`                        | None (click target) |
+| `bitty-terminal.bar:audio-toggle`      | PulseAudio target: left/middle toggle sink mute, right shows the sink detail.                             | host-injected `button`/`region`                        | None (click target) |
+| `bitty-terminal.bar:audio-step`        | Step the default sink volume; `delta` is a host-computed signed line count.                               | `delta` (number, required) plus host-injected `region` | None (wheel target) |
+| `bitty-terminal.bar:microphone-action` | Microphone target: left/right toggle source mute, middle shows the microphone detail.                     | host-injected `button`/`region`                        | None (click target) |
+| `bitty-terminal.bar:microphone-step`   | Step the source volume; `delta` is a host-computed signed line count.                                     | `delta` (number, required) plus host-injected `region` | None (wheel target) |
+| `bitty-terminal.bar:bluetooth-toggle`  | Flip Bluetooth radio power through `bluetooth.control`; degrades to a notification when denied.           | None                                                   | None (click target) |
+| `bitty-terminal.bar:backlight-step`    | Step backlight brightness by `delta` percent points through `backlight.control`.                          | `delta` (number, required, `-100..100`)                | None (click target) |
+| `bitty-terminal.bar:idle-toggle`       | Flip idle inhibition through `idle.control`; degrades to a notification when denied.                      | None                                                   | None (click target) |
 
 All commands are also invocable from the command palette. Clicks and wheel
-steps dispatch registered commands only; there is no shell-string path.
+steps dispatch registered commands only; there is no shell-string path. For a
+region-aware span, the host injects `button` (`left`/`right`/`middle`) and
+`region` into the declared args; a wheel merges the computed `delta`. A direct
+palette or keymap invocation carries no button and reads as `left`.
 
 ## Configuration
 
@@ -68,6 +76,7 @@ user-owned; the plugin never writes settings.
 | `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Next activation |
 | `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Next activation |
 | `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Next activation |
+| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, or `"nerd"`; an unknown value falls back to `"ascii"`.                   | Next activation |
 | `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group.                                                                                           | Next activation |
 | `modules_center` | string array | `["clock"]`                            | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Next activation |
 | `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Next activation |
@@ -78,6 +87,7 @@ user-owned; the plugin never writes settings.
 | `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Next activation |
 | `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                         | Next activation |
 | `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Next activation |
+| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                   | Next activation |
 | `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Next activation |
 | `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Next activation |
 | `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                       | Next activation |
@@ -90,6 +100,7 @@ return {
   edge = "bottom",
   show_single = false,
   label = "index",
+  icons = "ascii",
   modules_left = { "workspaces" },
   modules_center = { "clock" },
   modules_right = { "network", "cpu", "memory", "battery" },
@@ -103,8 +114,13 @@ and hides fail closed when its broker provider is absent or ungranted, so a
 fresh install on a host without sensors paints only the capsules and clock
 instead of showing errors. Remove a module from the group list to opt out, or
 set `modules_right = {}` to drop the whole group; add `pulseaudio`,
-`bluetooth`, `backlight`, `idle`, or `spectrum` only when the matching provider
-and capability grant are available.
+`microphone`, `bluetooth`, `backlight`, `idle`, or `spectrum` only when the
+matching provider and capability grant are available.
+
+`modules_left`, `modules_center`, and `modules_right` keep their declarative
+order. True left/center/right alignment needs a Core spacer/flex or anchor
+node (bitty-terminal/bitty#2411); the bar deliberately does not simulate it
+with padding strings.
 
 The host resolves plugin settings at activation and pins them to that
 generation; `config.reloaded` re-renders with the pinned values, so edit the
@@ -114,10 +130,11 @@ no unmount or move.
 
 ## Keybindings
 
-The plugin installs no keyboard bindings. Clicks bind the workspace `focus`
-command and the module control commands; wheel steps bind `audio-step`. To run
-a command from the keyboard, add a user mapping in
-`$XDG_CONFIG_HOME/bitty/init.lua`; user mappings keep precedence:
+The plugin installs no keyboard bindings. Clicks bind the capsule
+`workspace-action` and the module action commands; wheel steps bind
+`workspace-action`, `audio-step`, and `microphone-step`. To run a command from
+the keyboard, add a user mapping in `$XDG_CONFIG_HOME/bitty/init.lua`; user
+mappings keep precedence:
 
 ```lua
 return {
@@ -171,10 +188,13 @@ workspace; bind other bar commands or use the click targets.
   the line is bounded to 1024 UTF-8 bytes. A capsule remains one styled `Text`
   atom, preserving its complete click target.
 - A lone workspace hides the bar unless `show_single = true`.
-- Clicking an inactive capsule runs `bitty-terminal.bar:focus { id }`, which
-  queues `bitty.workspace.focus(id)` by stable id. The active capsule,
-  separators, scratchpad indicator, unknown or stale ids, and non-integer ids
-  queue nothing.
+- Every capsule carries the `workspace.<id>` item region. Left runs
+  `bitty-terminal.bar:workspace-action { id }`, which queues
+  `bitty.workspace.focus(id)` by stable id; the active capsule is a no-op on
+  left, and separators, the scratchpad indicator, unknown or stale ids, and
+  non-integer ids queue nothing. Middle/right show that workspace's detail,
+  and the wheel steps to the previous (wheel-up) or next workspace, wrapping
+  at both ends.
 - The bar re-renders from `bitty.workspace.list()` on every `workspace.*`
   event and re-renders on `config.reloaded`; settings themselves are pinned to
   the activation generation.
@@ -187,13 +207,16 @@ one inset row: a true center/right alignment needs a Spacer/flex node that v1
 does not expose (Phase C), so the groups keep their declarative order.
 
 Each listed name resolves against the in-plugin module registry. A module
-renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip? }` from
-local data or a broker-provided interface and refreshes on its own cadence:
+renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip?, region? }`
+from local data or a broker-provided interface and refreshes on its own
+cadence:
 
 - `workspaces` (event module): the capsule strip; refreshes from the
   `workspace.*` events — no timer where events suffice.
 - `clock` (timer module): `os.date` with a per-module `format` (a restricted,
-  zero-grant local source); refreshes on `tick_ms`.
+  zero-grant local source); refreshes on `tick_ms`. Right click cycles
+  short time, weekday date, and ISO calendar date; middle shows the full
+  local date-time; the cycle repaints immediately.
 - `cpu` (timer module, Phase B): aggregate CPU utilization from the broker
   `system.cpu@1.0.0` provider (`bitty-terminal.sensors`); polls at the 2 s
   provider ceiling.
@@ -203,10 +226,18 @@ local data or a broker-provided interface and refreshes on its own cadence:
   `system.battery@1.0.0`; polls at the 5 s ceiling.
 - `pulseaudio` (timer module, Phase B provider module): volume, mute, and port
   from the `audio.state@1.0.0` broker interface with icon selection Lua-side;
-  polls at the 2 s state ceiling. Click toggles mute and wheel steps the
-  volume through `audio.control@1.0.0` (bounded ±10 steps, 10 Hz coalesced
-  host-side). Read-only text when the control head is ungranted; hidden when
-  the state monitor is absent (fail closed).
+  polls at the 2 s state ceiling. Left/middle toggle mute, right shows the
+  sink detail, and the wheel steps the volume through `audio.control@1.0.0`
+  (bounded ±10 steps, 10 Hz coalesced host-side). Read-only text when the
+  control head is ungranted; hidden when the state monitor is absent (fail
+  closed).
+- `microphone` (timer module, Phase B provider module): source (microphone)
+  level and mute from the optional `source_volume_pct` / `source_muted` fields
+  of the same `audio.state@1.0.0` snapshot, so no new capability is requested.
+  Left/right toggle source mute and the wheel steps the input only when the
+  control head serves the optional source methods; middle shows the detail.
+  The live reader serves no source fields in 0.0.26, so the module hides fail
+  closed rather than showing a fake level.
 - `spectrum` (timer module, Phase B provider module): the cava-lite meter —
   block glyphs (U+2581-U+2588) in a Text node at 4 fps from the
   `audio.spectrum@1.0.0` broker interface (<=32 buckets). Falloff smoothing
@@ -224,14 +255,78 @@ indicators whose providers are available; provider modules hide fail closed,
 so an absent provider removes only that module. Set `modules_center = []` or
 `modules_right = []` to remove a group.
 
-Clicks dispatch **registered commands only** — `on-click` shell strings are not a
-vehicle and can never reach the scene. `on_click` binds a command id; a module
-with detail text but no command binds `bitty-terminal.bar:detail`, which shows
-the text as a notification (the v1 tooltip→notify fallback via
-`bitty.notify.show`). Wheel steps bind `on_scroll` the same way: the host
-merges the declared args with the computed `delta` (signed lines, positive for
-wheel-up) and invokes `bitty-terminal.bar:audio-step`, which clamps the burst
-to one bounded volume step.
+### Pointer buttons
+
+A module atom may declare a per-item band `region` beside its
+`on_click`/`on_scroll` binding (`region = { id, kind }`). Core derives the
+display-cell rectangle from the painted spans, so the plugin never supplies
+coordinates; a click on that span dispatches the registered command with the
+host-injected `button` (`left`/`right`/`middle`) and `region`, and a wheel
+merges the host-computed `delta`. Clicks and wheel steps therefore remain
+registered-command-only: `on-click` shell strings are not a vehicle and can
+never reach the scene.
+
+| Module                                     | Left                | Middle                | Right                      | Wheel                        |
+| ------------------------------------------ | ------------------- | --------------------- | -------------------------- | ---------------------------- |
+| `workspaces`                               | Focus the capsule   | Workspace detail      | Workspace detail           | Previous (up) / next (down)  |
+| `clock`                                    | No-op               | Full date-time detail | Cycle short/date/calendar  | —                            |
+| `network`                                  | Link detail         | Link detail           | Radio toggle when granted¹ | —                            |
+| `pulseaudio`                               | Toggle sink mute    | Toggle sink mute      | Sink detail                | Step volume (±10, coalesced) |
+| `microphone`                               | Toggle source mute² | Microphone detail     | Toggle source mute²        | Step input (±10)             |
+| `cpu`, `memory`, `battery`                 | Detail              | Detail                | Detail                     | —                            |
+| read-only `bluetooth`, `backlight`, `idle` | Detail³             | Detail³               | Detail³                    | —                            |
+
+¹ The 0.0.26 provider set serves no network control head, so the right click
+degrades to the link detail. The command is ready for a future
+`network.control` provider.
+
+² The audio provider exposes sink control only; source mute/step methods are
+probed optionally and an absent method fails closed. The microphone module
+itself also hides until the provider reports source fields.
+
+³ With its control head granted, the left click keeps the existing toggle/step
+behavior (`bluetooth-toggle`, `backlight-step`, `idle-toggle`); the detail
+fallback applies while the module is read-only.
+
+Hover is still the v1 fallback: a module with detail text but no command binds
+`bitty-terminal.bar:detail`, which shows a notification. Real hover tooltips
+need Core pointer-enter/leave and overlay anchoring (bitty-terminal/bitty#2411)
+and are not faked with notifications here.
+
+### Icons and display cells
+
+`icons` selects a shipped glyph map for the modules that carry a symbol:
+
+- `"ascii"` (default) is byte-identical to the historical output. Clock,
+  network, bluetooth, cpu, and memory compose no icon; audio keeps
+  `LO`/`MED`/`HI`/`MUTE`; battery keeps the five `[    ]`…`[====]` buckets and
+  the `+` charging mark.
+- `"pua"` uses the legacy Font Awesome private-use block (`nf-fa-*`), which is
+  present in most patched fonts.
+- `"nerd"` uses Nerd Fonts v3 Material Design glyphs (`nf-md-*`).
+
+The maps cover the clock, the network link kinds (Wi-Fi strength ladder,
+ethernet, disconnected, disabled), Bluetooth (off/on/connected), audio device
+classes (speaker/headphones/headset/HDMI/USB/Bluetooth) and muted state,
+microphone (on/muted), cpu, memory, and the battery charging/discharging
+ladders plus `full`. The network snapshot carries no signal strength in
+0.0.26, so Wi-Fi renders the top ladder rung; a future `signal_pct` field
+selects the real rung without a bar change.
+
+Width is measured in **display cells**, never UTF-8 bytes: combining marks
+take 0, CJK/emoji take 2, and Nerd Font private-use glyphs take their declared
+1 cell. A terminal without the font paints its replacement box in that same
+one-cell slot, so columns after the glyph do not shift. An over-long or
+malformed icon string falls back to its ASCII entry, and a missing map key
+composes no icon (fail closed). A 300-character text composed with an icon is
+still bounded to 256 display cells.
+
+Text+icon composition is a stable `{icon}` template key (or the clock's icon
+prefix). The default templates are unchanged for ASCII, e.g. battery remains
+`{icon} {capacity}%`; a custom per-module `format` may place `{icon}` itself.
+Per-module option tables are inert under the v1 settings contract (see below),
+so the maps currently compose through the tested defaults; the template
+surface lights up unchanged when table settings land.
 
 Per-module options live in a settings collection named after the module.
 Each collection is declared in the manifest `[settings]` table (bitty#2010);
@@ -240,20 +335,23 @@ form, so they are declared `string-array` with an empty default and read as
 module defaults until table settings land host- and SDK-side (CTX-1226). The
 option logic itself is unchanged and covered by the pure suites:
 
-| Module       | Option           | Type    | Default   | Notes                                                             |
-| ------------ | ---------------- | ------- | --------- | ----------------------------------------------------------------- |
-| `clock`      | `format`         | string  | `"%H:%M"` | `os.date` format.                                                 |
-| `clock`      | `tick_ms`        | integer | `60000`   | Timer cadence, clamped to the `200` ms floor.                     |
-| `clock`      | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
-| `pulseaudio` | `format`         | string  | none      | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
-| `pulseaudio` | `show_port`      | boolean | `true`    | Append the truncated port to the text.                            |
-| `pulseaudio` | `port_max_chars` | integer | `16`      | Port display width, `1..64`.                                      |
-| `pulseaudio` | `tick_ms`        | integer | `2000`    | State poll cadence, clamped to the `200` ms floor.                |
-| `pulseaudio` | `tooltip`        | string  | none      | Reserved for Phase C real tooltips (the port rides it today).     |
-| `spectrum`   | `buckets`        | integer | `8`       | Sample width, `1..32` (out-of-range falls back to `8`).           |
-| `spectrum`   | `tick_ms`        | integer | `250`     | Meter cadence (4 fps), clamped to the `200` ms floor.             |
-| `spectrum`   | `paused`         | boolean | `false`   | Freeze the last row without polling.                              |
-| `spectrum`   | `tooltip`        | string  | none      | Detail text shown via the `detail` notification.                  |
+| Module       | Option           | Type    | Default              | Notes                                                             |
+| ------------ | ---------------- | ------- | -------------------- | ----------------------------------------------------------------- |
+| `clock`      | `format`         | string  | `"%H:%M"`            | `os.date` format.                                                 |
+| `clock`      | `tick_ms`        | integer | `60000`              | Timer cadence, clamped to the `200` ms floor.                     |
+| `clock`      | `tooltip`        | string  | none                 | Detail text shown via the `detail` notification.                  |
+| `pulseaudio` | `format`         | string  | none                 | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
+| `pulseaudio` | `show_port`      | boolean | `true`               | Append the truncated port to the text.                            |
+| `pulseaudio` | `port_max_chars` | integer | `16`                 | Port display width, `1..64`.                                      |
+| `pulseaudio` | `tick_ms`        | integer | `2000`               | State poll cadence, clamped to the `200` ms floor.                |
+| `pulseaudio` | `tooltip`        | string  | none                 | Reserved for Phase C real tooltips (the port rides it today).     |
+| `microphone` | `format`         | string  | `"{icon} {volume}%"` | Keys: `{icon}`, `{volume}`, `{muted}`.                            |
+| `microphone` | `tick_ms`        | integer | `2000`               | Source poll cadence (same snapshot as `pulseaudio`).              |
+| `microphone` | `tooltip`        | string  | none                 | Default: `Microphone 70% (muted)`.                                |
+| `spectrum`   | `buckets`        | integer | `8`                  | Sample width, `1..32` (out-of-range falls back to `8`).           |
+| `spectrum`   | `tick_ms`        | integer | `250`                | Meter cadence (4 fps), clamped to the `200` ms floor.             |
+| `spectrum`   | `paused`         | boolean | `false`              | Freeze the last row without polling.                              |
+| `spectrum`   | `tooltip`        | string  | none                 | Detail text shown via the `detail` notification.                  |
 
 ### Modules (Phase B devices)
 
@@ -270,15 +368,17 @@ narrowed grant takes effect without restart.
   (`wifi 8.0K/4.0K`); unmeasured rates are omitted. The ESSID renders only
   when the separately-granted `network.essid` sub-interface resolves
   (`wifi 8.0K/4.0K (Home)`); otherwise the key is absent and the rest is
-  unaffected. Never clickable: no control wiring exists or is wanted here.
-  Options: `format` (`{link}`, `{down}`, `{up}`, `{essid}`), `tick_ms`
-  (clamped at or above 3 s), `tooltip`.
+  unaffected. The `network` region routes every button: left/middle show the
+  link detail, right toggles the radio when a `network.control` head resolves
+  (none ships in 0.0.26, so right falls back to detail).
+  Options: `format` (`{icon}`, `{link}`, `{down}`, `{up}`, `{essid}`),
+  `tick_ms` (clamped at or above 3 s), `tooltip`.
 - `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
   (`bt on (1/2)`; alias/address rendering stays Lua-side). Read-only by
   default: the bonded-device list rides the `detail` tooltip fallback. With
   `toggle = true` and the `bluetooth.control` head granted, the click flips
   power via `set_power` only; deny defaults to the read-only render.
-  Options: `format` (`{status}`, `{connected}`, `{total}`, `{powered}`),
+  Options: `format` (`{icon}`, `{status}`, `{connected}`, `{total}`, `{powered}`),
   `tick_ms` (at or above 5 s), `tooltip`, `toggle`.
 - `backlight` (timer, 5 s floor): brightness (`75%`). The click steps by
   `step` percent points (default `10`) via `backlight.control`/`set_step`
@@ -312,12 +412,12 @@ raw numbers and states only:
 
 | Module    | Option     | Type    | Default                | Notes                                                       |
 | --------- | ---------- | ------- | ---------------------- | ----------------------------------------------------------- |
-| `cpu`     | `format`   | string  | `"{total}%"`           | Template keys: `{total}`, `{total_pct}` (rounded integer).  |
+| `cpu`     | `format`   | string  | `"{total}%"`           | Keys: `{icon}`, `{total}`, `{total_pct}` (rounded).         |
 | `cpu`     | `warning`  | number  | `80`                   | At-or-above reads `warning`; needs `warning` < `critical`.  |
 | `cpu`     | `critical` | number  | `90`                   | At-or-above reads `critical`.                               |
 | `cpu`     | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
 | `cpu`     | `tooltip`  | string  | none                   | Default detail: `CPU 42% (8 cores)`.                        |
-| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{pct}`, `{used}`, `{total}` (GiB), swap triple.      |
+| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{icon}`, `{pct}`, `{used}`, `{total}` (GiB), swap.   |
 | `memory`  | `warning`  | number  | `80`                   | Same hot direction as `cpu`.                                |
 | `memory`  | `critical` | number  | `90`                   | Same hot direction as `cpu`.                                |
 | `memory`  | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
@@ -328,12 +428,14 @@ raw numbers and states only:
 | `battery` | `tick_ms`  | integer | `5000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
 | `battery` | `tooltip`  | string  | none                   | Default: `Battery 63% discharging`, plus `W` and time left. |
 
-Battery icons are five ASCII buckets by capacity (`[    ]` through
-`[====]`) with a `+` mark while charging. Only a discharging battery alarms
-on low capacity; `full`, `charging`, `plugged`, and `unknown` render the
-icon with the default presentation. Bar visibility stays workspace-driven
-(a lone workspace still hides the bar unless `show_single` is set);
-sensor-only plans inherit that rule.
+With `icons = "ascii"`, battery icons are five ASCII buckets by capacity
+(`[    ]` through `[====]`) with a `+` mark while charging. The `pua` and
+`nerd` maps swap in native charging/discharging ladders and a distinct full
+glyph; the ASCII ladder is unchanged. Only a discharging battery alarms on
+low capacity; `full`, `charging`, `plugged`, and `unknown` render the icon
+with the default presentation. Bar visibility stays workspace-driven (a lone
+workspace still hides the bar unless `show_single` is set); sensor-only plans
+inherit that rule.
 
 **Activation (landed, CTX-1226).** The manifest declares `[services.required]`
 for `system.cpu`/`system.memory`/`system.battery` at `^1.0` (plus the device
@@ -391,19 +493,19 @@ scratchpad segment.
 ### Capabilities
 
 `ui.rich` (mount and update the band), `workspace.read` (`list` and the
-`workspace.*` events), `workspace.control` (`focus` for clicks), and
-`platform.notify` (the tooltip→notify `detail` fallback), plus the 14 Phase B
-heads: `platform.cpu-read`/`memory-read`/`battery-read` (sensor providers),
-`platform.network.read`/`essid.read`,
+`workspace.*` events), `workspace.control` (`focus` for clicks and wheel
+cycling), and `platform.notify` (the tooltip→notify `detail` fallback), plus
+the 14 Phase B heads: `platform.cpu-read`/`memory-read`/`battery-read`
+(sensor providers), `platform.network.read`/`essid.read`,
 `platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
 `platform.idle.read/.control` (device providers, read never implying
 control), and `audio.state.read`/`state.control`/`spectrum` (audio monitor).
-Without `workspace.control` the bar still renders and pill clicks fail closed;
-without `platform.notify` the detail fallback fails closed. Device-module
-control clicks (`bluetooth-toggle`, `backlight-step`, `idle-toggle`) each call
-exactly one control method on their own control interface and only while that
-interface resolves; a denied call degrades to a notification and never
-retries.
+Without `workspace.control` the bar still renders and capsule clicks/wheel
+fail closed; without `platform.notify` the detail fallback fails closed.
+Device-module control clicks (`bluetooth-toggle`, `backlight-step`,
+`idle-toggle`) each call exactly one control method on their own control
+interface and only while that interface resolves; a denied call degrades to a
+notification and never retries.
 
 The audio modules negotiate the `audio.state@1.0.0`, `audio.control@1.0.0`,
 and `audio.spectrum@1.0.0` broker interfaces optionally: without the
@@ -414,11 +516,20 @@ entries supply the host negotiation versions.
 
 ### Known host gaps
 
-Gaps in the current host, not in this plugin:
+Gaps in the current host and provider set, not in this plugin:
 
-- The Core host parses `on_click` into the mounted scene but does not yet
-  route band clicks to the bound command, so clicking does nothing on a live
-  host. The mock host is used to exercise the command path.
+- True group alignment (`modules_left` at the left edge, the center group
+  centered, `modules_right` at the right edge) needs a Core spacer/flex or
+  anchor node. Tracked in bitty-terminal/bitty#2411; the bar keeps the
+  declarative order and does not fake alignment with padding strings.
+- Hover detail needs bounded Core pointer-enter/leave events plus an anchored
+  overlay. Until then the `bar:detail` notification is the only fallback; no
+  fake tooltip is painted.
+- The 0.0.26 audio provider reports no source (microphone) level/mute and
+  exposes no source control, so the `microphone` module hides and its
+  commands fail closed until that provider surface lands.
+- No `network.control` provider ships in 0.0.26, so the network right click
+  degrades to the link detail instead of toggling the radio.
 - Band painting ignores `fg`, `bg`, and `bold`. The active capsule stays
   identifiable through the `*` mark.
 - Plugin bands reserve no exclusive zone. They overlay the edge content row
@@ -441,6 +552,8 @@ Gaps in the current host, not in this plugin:
 | `tests/modules.test.ts`       | Declarative module chassis tests (order, cadence, cadence policy, fallback). |
 | `tests/devices.test.ts`       | Phase B device module tests (network, bluetooth, backlight, idle).           |
 | `tests/audio.test.ts`         | Audio module tests (pulseaudio state/control, spectrum meter, rate bounds).  |
+| `tests/icons.test.ts`         | Icon maps, ASCII fallback, format composition, display-cell width.           |
+| `tests/buttons.test.ts`       | Per-button click/wheel bindings for every region-aware module.               |
 | `justfile`                    | Quality gates with pinned tool versions.                                     |
 
 ## Development

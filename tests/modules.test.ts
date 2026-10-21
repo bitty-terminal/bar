@@ -293,6 +293,7 @@ describe("tooltip→notify fallback", () => {
     expect(node.on_click).toEqual({
       command: DETAIL_COMMAND,
       args: { text: "CPU 42% (2 cores)" },
+      region: { id: "cpu", kind: "module" },
     });
     expect(
       run.host.dispatchCommand(DETAIL_COMMAND, { text: "CPU 42% (2 cores)" }),
@@ -316,12 +317,16 @@ describe("tooltip→notify fallback", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("a module without a tooltip is not clickable", async () => {
+  test("the clock binds its region even without a tooltip (right cycles)", async () => {
     const run = await bar({
       workspaces: THREE,
       settings: { modules_left: ["clock"] },
     });
-    expect(leaves(run.component())[0]!.on_click).toBeUndefined();
+    expect(leaves(run.component())[0]!.on_click).toEqual({
+      command: "bitty-terminal.bar:clock-action",
+      args: {},
+      region: { id: "clock", kind: "module" },
+    });
   });
 });
 
@@ -517,6 +522,7 @@ describe("pure chassis helpers", () => {
       "cpu",
       "idle",
       "memory",
+      "microphone",
       "network",
       "pulseaudio",
       "spectrum",
@@ -532,6 +538,7 @@ describe("pure chassis helpers", () => {
     expect(modules["memory"]!.name).toBe("memory");
     expect(modules["battery"]!.name).toBe("battery");
     expect(modules["pulseaudio"]!.name).toBe("pulseaudio");
+    expect(modules["microphone"]!.name).toBe("microphone");
     expect(modules["spectrum"]!.name).toBe("spectrum");
   });
 

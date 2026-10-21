@@ -107,7 +107,7 @@ describe("rendering parity with the Core workspaceline", () => {
       expect(text).toBe(painted(run));
     });
 
-    test(`${name}: only inactive capsules carry stable-id clicks`, async () => {
+    test(`${name}: every capsule carries a workspace-action region`, async () => {
       const run = await bar({ workspaces: rows });
       for (const leaf of leaves(run.component())) {
         const capsule = /^ (\d+)[*+!]* $/.exec(leaf.text ?? "");
@@ -115,8 +115,17 @@ describe("rendering parity with the Core workspaceline", () => {
           const row = rows.find(
             (candidate) => candidate.id === Number(capsule[1]),
           );
-          if (row?.active) expect(leaf.on_click).toBeUndefined();
-          else expect(leaf.on_click?.args).toEqual({ id: row?.id });
+          expect(leaf.on_click?.command).toBe(
+            "bitty-terminal.bar:workspace-action",
+          );
+          expect(leaf.on_click?.args).toEqual({ id: row?.id });
+          expect(leaf.on_click?.region).toEqual({
+            id: `workspace.${row?.id}`,
+            kind: "item",
+          });
+          expect(leaf.on_scroll?.command).toBe(
+            "bitty-terminal.bar:workspace-action",
+          );
         } else {
           expect(leaf.on_click).toBeUndefined();
         }
@@ -156,6 +165,16 @@ describe("rendering parity with the Core workspaceline", () => {
       fg: "background",
       bg: "accent",
       bold: true,
+      on_click: {
+        command: "bitty-terminal.bar:workspace-action",
+        args: { id: 4 },
+        region: { id: "workspace.4", kind: "item" },
+      },
+      on_scroll: {
+        command: "bitty-terminal.bar:workspace-action",
+        args: {},
+        region: { id: "workspace.4", kind: "item" },
+      },
     });
     expect(leaves(run.component())[0]?.bg).toBe("selection");
     expect(leaves(run.component())[0]?.fg).toBeUndefined();
@@ -243,7 +262,10 @@ describe("workspace label modes", () => {
       const active = leaves(run.component()).find(
         (leaf) => leaf.text?.endsWith("* ") === true,
       )!;
-      expect(active.on_click).toBeUndefined();
+      expect(active.on_click?.command).toBe(
+        "bitty-terminal.bar:workspace-action",
+      );
+      expect(active.on_click?.args).toEqual({ id: 2 });
       expect(
         leaves(run.component())
           .filter((leaf) => leaf.text === " ")
@@ -577,6 +599,16 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
         bold: true,
         fg: "background",
         bg: "accent",
+        on_click: {
+          command: "bitty-terminal.bar:workspace-action",
+          args: { id: 4 },
+          region: { id: "workspace.4", kind: "item" },
+        },
+        on_scroll: {
+          command: "bitty-terminal.bar:workspace-action",
+          args: {},
+          region: { id: "workspace.4", kind: "item" },
+        },
       },
     ]);
   });
