@@ -97,7 +97,10 @@ audio.spectrum = true
 # - Chassis scalars (`show`, `edge`, `show_single`, `name_max_chars`, `label`)
 #   mirror `M.DEFAULTS`; the module-group lists (`modules_left/_center/_right`)
 #   mirror `M.DEFAULT_MODULE_PLAN` (absent groups fall back to the default
-#   plan: workspaces left, clock center, empty right).
+#   plan: workspaces left, clock center, and the network/cpu/memory/battery
+#   system indicators right). Provider modules hide fail closed when their
+#   broker provider is absent or ungranted, so the shipped right group is safe
+#   on hosts without sensors or network state.
 #   `label` is a bounded string enum (`index` | `name` | `both`); v1 settings
 #   have no enum kind, so the shipped default plus the local closed-set check
 #   in `M.read_settings` own the fallback (an unknown value paints `index`
@@ -121,7 +124,7 @@ name_max_chars = { type = "int", default = 32 }
 label = { type = "string", default = "index" }
 modules_left = { type = "string-array", default = ["workspaces"] }
 modules_center = { type = "string-array", default = ["clock"] }
-modules_right = { type = "string-array", default = [] }
+modules_right = { type = "string-array", default = ["network", "cpu", "memory", "battery"] }
 workspaces = { type = "string-array", default = [] }
 clock = { type = "string-array", default = [] }
 network = { type = "string-array", default = [] }

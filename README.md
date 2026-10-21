@@ -61,27 +61,27 @@ Settings are declared in `bitty-plugin.toml` `[settings]` and resolved from
 `$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua`. Every key is
 user-owned; the plugin never writes settings.
 
-| Key              | Type         | Default          | Description                                                                                                                        | Applies         |
-| ---------------- | ------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `show`           | boolean      | `true`           | Mount and paint the bar.                                                                                                           | Next activation |
-| `edge`           | string       | `"bottom"`       | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                       | Next activation |
-| `show_single`    | boolean      | `false`          | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Next activation |
-| `name_max_chars` | integer      | `32`             | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Next activation |
-| `label`          | string       | `"index"`        | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Next activation |
-| `modules_left`   | string array | `["workspaces"]` | Ordered module names for the left group.                                                                                           | Next activation |
-| `modules_center` | string array | `["clock"]`      | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Next activation |
-| `modules_right`  | string array | `[]`             | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Next activation |
-| `workspaces`     | string array | `[]`             | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Next activation |
-| `clock`          | string array | `[]`             | Per-module option collection for `clock`; same string-array limit as above.                                                        | Next activation |
-| `network`        | string array | `[]`             | Per-module option collection for `network`; same string-array limit as above.                                                      | Next activation |
-| `bluetooth`      | string array | `[]`             | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Next activation |
-| `backlight`      | string array | `[]`             | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Next activation |
-| `idle`           | string array | `[]`             | Per-module option collection for `idle`; same string-array limit as above.                                                         | Next activation |
-| `pulseaudio`     | string array | `[]`             | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Next activation |
-| `spectrum`       | string array | `[]`             | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Next activation |
-| `cpu`            | string array | `[]`             | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Next activation |
-| `memory`         | string array | `[]`             | Per-module option collection for `memory`; same string-array limit as above.                                                       | Next activation |
-| `battery`        | string array | `[]`             | Per-module option collection for `battery`; same string-array limit as above.                                                      | Next activation |
+| Key              | Type         | Default                                | Description                                                                                                                        | Applies         |
+| ---------------- | ------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                           | Next activation |
+| `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                       | Next activation |
+| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Next activation |
+| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Next activation |
+| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Next activation |
+| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group.                                                                                           | Next activation |
+| `modules_center` | string array | `["clock"]`                            | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Next activation |
+| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Next activation |
+| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Next activation |
+| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                        | Next activation |
+| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                      | Next activation |
+| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Next activation |
+| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Next activation |
+| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                         | Next activation |
+| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Next activation |
+| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Next activation |
+| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Next activation |
+| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                       | Next activation |
+| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                      | Next activation |
 
 ```lua
 -- $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
@@ -91,10 +91,20 @@ return {
   show_single = false,
   label = "index",
   modules_left = { "workspaces" },
-  modules_center = { "clock", "cpu", "memory", "battery" },
-  modules_right = { "network", "pulseaudio" },
+  modules_center = { "clock" },
+  modules_right = { "network", "cpu", "memory", "battery" },
 }
 ```
+
+The shipped plan keeps workspaces on the left and the clock in the center
+group. The right group defaults to the `network`, `cpu`, `memory`, and
+`battery` indicators, in that order. Each of those modules is provider-backed
+and hides fail closed when its broker provider is absent or ungranted, so a
+fresh install on a host without sensors paints only the capsules and clock
+instead of showing errors. Remove a module from the group list to opt out, or
+set `modules_right = {}` to drop the whole group; add `pulseaudio`,
+`bluetooth`, `backlight`, `idle`, or `spectrum` only when the matching provider
+and capability grant are available.
 
 The host resolves plugin settings at activation and pins them to that
 generation; `config.reloaded` re-renders with the pinned values, so edit the
@@ -138,16 +148,23 @@ workspace; bind other bar commands or use the click targets.
 
 ## Workspace bar
 
-- One capsule per workspace, `[label]`, joined by single spaces. `label`
-  defaults to the stable workspace seq alone (`[1] [2*]`), which keeps the bar
-  quiet; `label = "name"` renders the truncated name (`[shell]`) and
-  `label = "both"` the historical `id:name` pair (`[1:shell]`). The id is the
+- One padded capsule per workspace, one space each side (`" 1 "`), joined by
+  single spaces. `label` defaults to the stable workspace seq alone
+  (`" 1   2* "`), which keeps the bar quiet; `label = "name"` renders the
+  truncated name (`" shell "`) and `label = "both"` the historical `id:name`
+  pair (`" 1:shell "`). The id is the
   stable workspace seq from `bitty.workspace.list()`, so closing a workspace
-  never renumbers the survivors. The active capsule carries `*`, bold,
-  `background` foreground, and the `accent` background theme tokens.
-  Occupied workspaces carry `+` when `panel_count > 0`; attention (`bell`,
-  `activity`, or `exited`) carries `!` with `cursor` emphasis. An empty
-  workspace list renders `—` (fail closed).
+  never renumbers the survivors. The active capsule carries `*`, bold, the
+  `background` foreground, and the `accent` background theme token. Inactive
+  capsules use the subtler `selection` background so they recede without
+  disappearing; the capsule padding is part of the same atom and therefore
+  part of the click target. Occupied workspaces carry `+` when
+  `panel_count > 0`; attention (`bell`, `activity`, or `exited`) carries `!`
+  with `cursor` emphasis. An empty workspace list renders `—` (fail closed).
+- Core's v1 band exposes text runs with `fg`/`bg`/`bold` and painted fills, but
+  no corner-radius primitive. The shipped capsule is therefore a square padded
+  background (one space each side) rather than a rounded pill; rounding needs a
+  future Core band shape, not a plugin-local invention.
 - In `name` and `both` modes, names are cut to 32 characters (or
   `name_max_chars`); an empty name falls back to the seq, so a capsule is
   never blank. Complete capsules are retained in stable numeric id order and
@@ -201,8 +218,11 @@ local data or a broker-provided interface and refreshes on its own cadence:
 A bad spec never hides the bar: an unknown module name, a non-name entry, a
 non-list group, or a plan that resolves to nothing falls back to the shipped
 default plan (`modules_left = ["workspaces"]`, `modules_center = ["clock"]`,
-`modules_right = []`). A fresh install therefore paints the workspace capsules
-followed by the clock; set `modules_center = []` to remove the clock.
+`modules_right = ["network", "cpu", "memory", "battery"]`). A fresh install
+therefore paints the workspace capsules, the clock, and any right-side system
+indicators whose providers are available; provider modules hide fail closed,
+so an absent provider removes only that module. Set `modules_center = []` or
+`modules_right = []` to remove a group.
 
 Clicks dispatch **registered commands only** — `on-click` shell strings are not a
 vehicle and can never reach the scene. `on_click` binds a command id; a module

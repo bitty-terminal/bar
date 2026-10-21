@@ -33,18 +33,19 @@ import {
 const runs: BarRun[] = [];
 
 /**
- * These tests pin the workspace-only center (`modules_center: []`) so the
+ * These tests pin a workspace-only plan (`modules_center: []`,
+ * `modules_right: []`) so the
  * device assertions stay focused on their module; the shipped default plan
  * (workspaces left, clock center) is covered in modules.test.ts.
  */
-const NO_CENTER = { modules_center: [] } as const;
+const WORKSPACE_ONLY = { modules_center: [], modules_right: [] } as const;
 
 async function bar(
   options: Parameters<typeof activateBar>[0] = {},
 ): Promise<BarRun> {
   const run = await activateBar({
     ...options,
-    settings: { ...NO_CENTER, ...options.settings },
+    settings: { ...WORKSPACE_ONLY, ...options.settings },
   });
   runs.push(run);
   return run;
@@ -149,7 +150,7 @@ describe("network module (bitty#2012)", () => {
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -164,7 +165,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(badLink)).toBe("[1] [4*] [9]");
+    expect(painted(badLink)).toBe(" 1   4*   9 ");
 
     const failing = await bar({
       workspaces: THREE,
@@ -180,7 +181,7 @@ describe("network module (bitty#2012)", () => {
         },
       },
     });
-    expect(painted(failing)).toBe("[1] [4*] [9]");
+    expect(painted(failing)).toBe(" 1   4*   9 ");
     expect(failing.host.handlerViolations).toEqual([]);
   });
 
@@ -338,7 +339,7 @@ describe("bluetooth module (bitty#2017)", () => {
       workspaces: THREE,
       settings: { modules_left: ["bluetooth", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("[1] [4*] [9]");
+    expect(painted(ungranted)).toBe(" 1   4*   9 ");
 
     const misshapen = await bar({
       workspaces: THREE,
@@ -350,7 +351,7 @@ describe("bluetooth module (bitty#2017)", () => {
         },
       },
     });
-    expect(painted(misshapen)).toBe("[1] [4*] [9]");
+    expect(painted(misshapen)).toBe(" 1   4*   9 ");
   });
 });
 
@@ -459,7 +460,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
         "backlight.state": { version: "1.0.0", impl: backlightState(500) },
       },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
   });
 });
 
@@ -548,7 +549,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
       workspaces: THREE,
       settings: { modules_left: ["idle", "workspaces"] },
     });
-    expect(painted(ungranted)).toBe("[1] [4*] [9]");
+    expect(painted(ungranted)).toBe(" 1   4*   9 ");
   });
 });
 

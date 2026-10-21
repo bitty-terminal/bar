@@ -30,18 +30,19 @@ const DETAIL_COMMAND = "bitty-terminal.bar:detail";
 const runs: BarRun[] = [];
 
 /**
- * These tests pin the workspace-only center (`modules_center: []`) so plan
+ * These tests pin a workspace-only plan (`modules_center: []`,
+ * `modules_right: []`) so plan
  * ordering assertions stay focused; `defaultBar` exercises the shipped
- * default plan itself (workspaces left, clock center, empty right).
+ * default plan itself (workspaces left, clock center, system indicators right).
  */
-const NO_CENTER = { modules_center: [] } as const;
+const WORKSPACE_ONLY = { modules_center: [], modules_right: [] } as const;
 
 async function bar(
   options: Parameters<typeof activateBar>[0] = {},
 ): Promise<BarRun> {
   const run = await activateBar({
     ...options,
-    settings: { ...NO_CENTER, ...options.settings },
+    settings: { ...WORKSPACE_ONLY, ...options.settings },
   });
   runs.push(run);
   return run;
@@ -72,9 +73,9 @@ const THREE: WorkspaceInfo[] = [
 ];
 
 describe("declarative module list", () => {
-  test("the shipped default plan is left=workspaces, center=clock, right=[]", async () => {
+  test("the shipped default plan is left=workspaces, center=clock, right=system indicators", async () => {
     const run = await defaultBar({ workspaces: THREE });
-    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
     expect(run.mounts.length).toBe(1);
     expect(run.host.handlerViolations).toEqual([]);
   });
@@ -86,7 +87,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(painted(run)).toMatch(/^\d\d:\d\d \[1\] \[4\*\] \[9\]$/);
+    expect(painted(run)).toMatch(/^\d\d:\d\d  1   4\*   9 $/);
   });
 
   test("reordering the settings reorders the render", async () => {
@@ -94,7 +95,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["workspaces", "clock"] },
     });
-    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
   });
 
   test("modules_right renders after the left group", async () => {
@@ -105,7 +106,7 @@ describe("declarative module list", () => {
         modules_right: ["clock"],
       },
     });
-    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
   });
 
   test("modules_center keeps its declared position (true centering is Phase C)", async () => {
@@ -116,7 +117,7 @@ describe("declarative module list", () => {
         modules_center: ["workspaces"],
       },
     });
-    expect(painted(run)).toMatch(/^\d\d:\d\d \[1\] \[4\*\] \[9\]$/);
+    expect(painted(run)).toMatch(/^\d\d:\d\d  1   4\*   9 $/);
   });
 
   test("unknown module names are skipped", async () => {
@@ -124,7 +125,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["nope", "workspaces", "also-nope"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4\*   9 ");
   });
 
   test("a malformed spec never hides the bar (falls back to the default plan)", async () => {
@@ -132,7 +133,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: "clock" },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4\*   9 ");
   });
 
   test("a plan of only unknown names falls back to the default plan", async () => {
@@ -140,7 +141,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["rm -rf /"] },
     });
-    expect(painted(run)).toMatch(/^\[1\] \[4\*\] \[9\] \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
   });
 
   test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
@@ -153,7 +154,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: [42, "clock"] },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4\*   9 ");
 
     const factory = new LuaFactory();
     const lua = await factory.createEngine({ injectObjects: false });
@@ -368,7 +369,7 @@ describe("pure chassis helpers", () => {
     lua.global.close();
   });
 
-  test("the default module plan is left=workspaces, center=clock, right=[]", async () => {
+  test("the default module plan is left=workspaces, center=clock, right=system indicators", async () => {
     expect(mod["MODULE_GROUPS"]).toEqual([
       "modules_left",
       "modules_center",
@@ -377,12 +378,23 @@ describe("pure chassis helpers", () => {
     const groups = mod["DEFAULT_MODULE_PLAN"] as Record<string, unknown>;
     expect(groups["modules_left"]).toEqual(["workspaces"]);
     expect(groups["modules_center"]).toEqual(["clock"]);
-    // An empty Lua table bridges as an empty object, not an empty array.
-    expect(groups["modules_right"]).toEqual({});
+    expect(groups["modules_right"]).toEqual([
+      "network",
+      "cpu",
+      "memory",
+      "battery",
+    ]);
     const plan = (await mod["read_plan"](() => undefined)) as Array<{
       name: string;
     }>;
-    expect(plan.map((spec) => spec.name)).toEqual(["workspaces", "clock"]);
+    expect(plan.map((spec) => spec.name)).toEqual([
+      "workspaces",
+      "clock",
+      "network",
+      "cpu",
+      "memory",
+      "battery",
+    ]);
   });
 
   test("render_template substitutes {key} and keeps unknown keys", () => {
@@ -485,7 +497,14 @@ describe("pure chassis helpers", () => {
 
     delete cfg["modules_left"];
     const fallback = mod["read_plan"](get) as Array<{ name: string }>;
-    expect(fallback.map((spec) => spec.name)).toEqual(["workspaces", "clock"]);
+    expect(fallback.map((spec) => spec.name)).toEqual([
+      "workspaces",
+      "clock",
+      "network",
+      "cpu",
+      "memory",
+      "battery",
+    ]);
   });
 
   test("the module registry exposes workspaces, clock, and the Phase B device, sensor, and audio modules", () => {

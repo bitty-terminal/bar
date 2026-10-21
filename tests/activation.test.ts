@@ -27,18 +27,19 @@ import {
 const runs: BarRun[] = [];
 
 /**
- * These tests pin the workspace-only center (`modules_center: []`) so the
+ * These tests pin a workspace-only plan (`modules_center: []`,
+ * `modules_right: []`) so the
  * provider assertions stay focused on their module; the shipped default plan
  * (workspaces left, clock center) is covered in modules.test.ts.
  */
-const NO_CENTER = { modules_center: [] } as const;
+const WORKSPACE_ONLY = { modules_center: [], modules_right: [] } as const;
 
 async function bar(
   options: Parameters<typeof activateBar>[0] = {},
 ): Promise<BarRun> {
   const run = await activateBar({
     ...options,
-    settings: { ...NO_CENTER, ...options.settings },
+    settings: { ...WORKSPACE_ONLY, ...options.settings },
   });
   runs.push(run);
   return run;
@@ -123,7 +124,10 @@ describe("activation manifest declarations", () => {
       label: { kind: "string", def: "index" },
       modules_left: { kind: "string-array", def: ["workspaces"] },
       modules_center: { kind: "string-array", def: ["clock"] },
-      modules_right: { kind: "string-array", def: [] },
+      modules_right: {
+        kind: "string-array",
+        def: ["network", "cpu", "memory", "battery"],
+      },
       // Per-module option collections (v1 has no table form: declared
       // string-array with an empty default so reads fail to module
       // defaults instead of aborting activation; see bitty-plugin.toml).
@@ -178,7 +182,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("42% [1] [4*] [9]");
+    expect(painted(live)).toBe("42%  1   4*   9 ");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
@@ -186,7 +190,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       settings: { modules_left: ["cpu", "workspaces"] },
       grants: [...SENSOR_GRANTS],
     });
-    expect(painted(dark)).toBe("[1] [4*] [9]");
+    expect(painted(dark)).toBe(" 1   4*   9 ");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -208,14 +212,14 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(live)).toBe("wifi 8.0K/4.0K [1] [4*] [9]");
+    expect(painted(live)).toBe("wifi 8.0K/4.0K  1   4*   9 ");
     expect(live.host.handlerViolations).toEqual([]);
 
     const dark = await bar({
       workspaces: THREE,
       settings: { modules_left: ["network", "workspaces"] },
     });
-    expect(painted(dark)).toBe("[1] [4*] [9]");
+    expect(painted(dark)).toBe(" 1   4*   9 ");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 
@@ -232,7 +236,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
         },
       },
     });
-    expect(painted(run)).toBe("[1] [4*] [9]");
+    expect(painted(run)).toBe(" 1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -249,7 +253,7 @@ describe("Phase B liveness (negotiate → grant → poll → render)", () => {
       workspaces: THREE,
       settings: { modules_left: ["pulseaudio", "workspaces"] },
     });
-    expect(painted(dark)).toBe("[1] [4*] [9]");
+    expect(painted(dark)).toBe(" 1   4*   9 ");
     expect(dark.host.handlerViolations).toEqual([]);
   });
 });
