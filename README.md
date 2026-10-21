@@ -339,7 +339,7 @@ option logic itself is unchanged and covered by the pure suites:
 | ------------ | ---------------- | ------- | -------------------- | ----------------------------------------------------------------- |
 | `clock`      | `format`         | string  | `"%H:%M"`            | `os.date` format.                                                 |
 | `clock`      | `tick_ms`        | integer | `60000`              | Timer cadence, clamped to the `200` ms floor.                     |
-| `clock`      | `tooltip`        | string  | none                 | Detail text shown via the `detail` notification.                  |
+| `clock`      | `tooltip`        | string  | none                 | Reserved; the middle click shows the live date-time detail.       |
 | `pulseaudio` | `format`         | string  | none                 | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
 | `pulseaudio` | `show_port`      | boolean | `true`               | Append the truncated port to the text.                            |
 | `pulseaudio` | `port_max_chars` | integer | `16`                 | Port display width, `1..64`.                                      |
@@ -372,7 +372,7 @@ narrowed grant takes effect without restart.
   link detail, right toggles the radio when a `network.control` head resolves
   (none ships in 0.0.26, so right falls back to detail).
   Options: `format` (`{icon}`, `{link}`, `{down}`, `{up}`, `{essid}`),
-  `tick_ms` (clamped at or above 3 s), `tooltip`.
+  `tick_ms` (clamped at or above 3 s), `tooltip` (reserved; live detail wins).
 - `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
   (`bt on (1/2)`; alias/address rendering stays Lua-side). Read-only by
   default: the bonded-device list rides the `detail` tooltip fallback. With
