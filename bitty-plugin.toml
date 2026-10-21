@@ -58,12 +58,14 @@ plugin-api = "^1.0"
 [capabilities]
 # Deny by default; each capability is requested one by one.
 # - ui.rich: mount and update the workspace bar band (`bitty.ui.mount/update`).
+# - ui.overlay: mount the presentation-only `overlay` block the host presents
+#   as a non-modal hover tooltip (Core #2411). No `ui.overlay.focus` is
+#   requested: the plugin never acquires input capture or sets modal state.
 # - workspace.read: `bitty.workspace.list` and the `workspace.*` events.
 # - workspace.control: `bitty.workspace.focus` for pill clicks (read never
 #   implies control, ADR-0014).
-# - platform.notify: the tooltip→notify fallback (`bitty.notify.show`) for a
-#   module that carries detail text but no click command; best-effort and
-#   fail-closed when ungranted.
+# - platform.notify: the explicit `detail` fallback (`bitty.notify.show`) and
+#   best-effort control-denial notices; hover tooltips never use it.
 # - Phase B sensor heads (`platform.cpu-read`, `platform.memory-read`,
 #   `platform.battery-read`, CTX-1218/bitty#2019/#2011/#2016): read-only
 #   provider backing for the cpu/memory/battery modules (one head per
@@ -80,6 +82,7 @@ plugin-api = "^1.0"
 #   control). Spellings verified against bitty main
 #   `crates/bitty-plugin-host/src/capability.rs` and the SDK#152 closed set.
 ui.rich = true
+ui.overlay = true
 workspace.read = true
 workspace.control = true
 platform.notify = true
@@ -156,8 +159,10 @@ battery = { type = "string-array", default = [] }
 # Static triggers let the host register the plugin without creating a VM.
 # Commands are plugin-qualified: `<plugin-id>:<resource>`. `focus` remains a
 # public command for direct invocation and keymaps; capsules bind
-# `workspace-action` (left focus, wheel cycle, middle/right detail). `detail`
-# is the tooltip→notify fallback bound to a module's detail text; the
+# `workspace-action` (left focus, wheel cycle, middle/right detail). `hover`
+# is the Core #2411 pointer enter/leave target bound to every module region
+# (it updates the overlay tooltip and never captures input). `detail` is the
+# explicit notification fallback bound to a read-only module's click; the
 # `bluetooth-toggle`, `backlight-step`, and `idle-toggle` commands are the
 # device-module control click targets (each calls exactly one control method
 # on its own control interface, never anything else); `audio-toggle` mutes on
@@ -170,6 +175,7 @@ battery = { type = "string-array", default = [] }
 commands = [
   "bitty-terminal.bar:focus",
   "bitty-terminal.bar:detail",
+  "bitty-terminal.bar:hover",
   "bitty-terminal.bar:bluetooth-toggle",
   "bitty-terminal.bar:backlight-step",
   "bitty-terminal.bar:idle-toggle",

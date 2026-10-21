@@ -75,8 +75,11 @@ const THREE: WorkspaceInfo[] = [
 describe("declarative module list", () => {
   test("the shipped default plan is left=workspaces, center=clock, right=system indicators", async () => {
     const run = await defaultBar({ workspaces: THREE });
-    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
-    expect(run.mounts.length).toBe(1);
+    expect(painted(run)).toMatch(/^ 1   4\*   9 \d\d:\d\d$/);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual([
+      "bottom",
+      "overlay",
+    ]);
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -98,7 +101,7 @@ describe("declarative module list", () => {
     expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
   });
 
-  test("modules_right renders after the left group", async () => {
+  test("modules_right renders in the right group", async () => {
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -106,10 +109,10 @@ describe("declarative module list", () => {
         modules_right: ["clock"],
       },
     });
-    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9 \d\d:\d\d$/);
   });
 
-  test("modules_center keeps its declared position (true centering is Phase C)", async () => {
+  test("modules_center renders in the center group (Core anchors it)", async () => {
     const run = await bar({
       workspaces: THREE,
       settings: {
@@ -117,7 +120,7 @@ describe("declarative module list", () => {
         modules_center: ["workspaces"],
       },
     });
-    expect(painted(run)).toMatch(/^\d\d:\d\d  1   4\*   9 $/);
+    expect(painted(run)).toMatch(/^\d\d:\d\d 1   4\*   9 $/);
   });
 
   test("unknown module names are skipped", async () => {
@@ -141,7 +144,7 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["rm -rf /"] },
     });
-    expect(painted(run)).toMatch(/^ 1   4\*   9  \d\d:\d\d$/);
+    expect(painted(run)).toMatch(/^ 1   4\*   9 \d\d:\d\d$/);
   });
 
   test("non-name entries fail the list to the default plan (strict, no coercion)", async () => {
@@ -176,7 +179,10 @@ describe("declarative module list", () => {
       workspaces: THREE,
       settings: { modules_left: ["clock", "workspaces"] },
     });
-    expect(run.mounts.length).toBe(1);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual([
+      "bottom",
+      "overlay",
+    ]);
   });
 });
 

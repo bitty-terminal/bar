@@ -175,6 +175,11 @@ describe("rendering parity with the Core workspaceline", () => {
         args: {},
         region: { id: "workspace.4", kind: "item" },
       },
+      on_hover: {
+        command: "bitty-terminal.bar:hover",
+        args: { region: "bar:module:workspaces" },
+        region: { id: "bar:module:workspaces", kind: "module" },
+      },
     });
     expect(leaves(run.component())[0]?.bg).toBe("selection");
     expect(leaves(run.component())[0]?.fg).toBeUndefined();
@@ -385,7 +390,10 @@ describe("visibility", () => {
         label: "id",
       },
     });
-    expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual([
+      "bottom",
+      "overlay",
+    ]);
     expect(painted(run)).toBe(" 1   4*   9 ");
     expect(run.host.notifications).toEqual([
       {
@@ -419,12 +427,15 @@ describe("visibility", () => {
 describe("edge", () => {
   test("defaults to the bottom band (workspace.bar.edge default)", async () => {
     const run = await bar({ workspaces: THREE });
-    expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual([
+      "bottom",
+      "overlay",
+    ]);
   });
 
   test("edge = top mounts the top band", async () => {
     const run = await bar({ workspaces: THREE, settings: { edge: "top" } });
-    expect(run.mounts.map((mount) => mount.slot)).toEqual(["top"]);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual(["top", "overlay"]);
   });
 });
 
@@ -494,7 +505,10 @@ describe("live updates", () => {
     const run = await bar({ workspaces: THREE });
     run.host.bitty.settings.set("edge", "top");
     run.host.publish("config.reloaded", {});
-    expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
+    expect(run.mounts.map((mount) => mount.slot)).toEqual([
+      "bottom",
+      "overlay",
+    ]);
     expect(painted(run)).toBe(" 1   4*   9 ");
     expect(run.host.handlerViolations).toEqual([]);
   });
@@ -608,6 +622,11 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
           command: "bitty-terminal.bar:workspace-action",
           args: {},
           region: { id: "workspace.4", kind: "item" },
+        },
+        on_hover: {
+          command: "bitty-terminal.bar:hover",
+          args: { region: "bar:module:workspaces" },
+          region: { id: "bar:module:workspaces", kind: "module" },
         },
       },
     ]);
