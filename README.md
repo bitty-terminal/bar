@@ -277,8 +277,8 @@ never reach the scene.
 | read-only `bluetooth`, `backlight`, `idle` | Detail³             | Detail³               | Detail³                    | —                            |
 
 ¹ The 0.0.26 provider set serves no network control head, so the right click
-degrades to the link detail. The command is ready for a future
-`network.control` provider.
+degrades to the link detail. A future provider also
+needs the matching manifest declaration.
 
 ² The audio provider exposes sink control only; source mute/step methods are
 probed optionally and an absent method fails closed. The microphone module
@@ -370,7 +370,8 @@ narrowed grant takes effect without restart.
   (`wifi 8.0K/4.0K (Home)`); otherwise the key is absent and the rest is
   unaffected. The `network` region routes every button: left/middle show the
   link detail, right toggles the radio when a `network.control` head resolves
-  (none ships in 0.0.26, so right falls back to detail).
+  (none ships in 0.0.26, so right falls back to detail; a future provider also
+  needs the matching manifest declaration).
   Options: `format` (`{icon}`, `{link}`, `{down}`, `{up}`, `{essid}`),
   `tick_ms` (clamped at or above 3 s), `tooltip` (reserved; live detail wins).
 - `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts

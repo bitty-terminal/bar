@@ -1886,8 +1886,9 @@ end
 -- Optional network control head (bar#30 "right toggles the Wi-Fi radio when
 -- granted"). The 0.0.26 provider set serves no network control interface, so
 -- this negotiation resolves nil and the right click degrades to the detail
--- notification; the command is ready for an `owner:network.control@1.0`
--- provider without a bar change. No capability is requested here.
+-- notification. A future provider still needs the matching manifest
+-- `[services.required]` entry (and a capability head); this probe is the
+-- forward-compatible call site only.
 M.NETWORK_CONTROL_IFACE = "network.control"
 
 -- Flips the radio through an optional control head. Returns true only when a
@@ -3896,7 +3897,9 @@ bitty.commands.register({
 
 -- Network actions (bar#30): left/middle show the link detail. Right asks the
 -- optional `network.control` head to toggle the radio; when no head is
--- present (the 0.0.26 provider set) the same click degrades to the detail.
+-- present (the 0.0.26 provider set, which has no such interface) the same
+-- click degrades to the detail. Enabling it later needs a provider and the
+-- matching manifest declaration (the Lua call site stays unchanged).
 bitty.commands.register({
   id = NETWORK_ACTION_COMMAND_ID,
   title = "Unified Bar: network action",
