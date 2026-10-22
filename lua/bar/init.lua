@@ -194,6 +194,35 @@ M.SCRATCHPAD_COUNT_MAX = 1 -- Core SCRATCHPAD_COUNT_MAX (single-slot ceiling)
 -- Clock module defaults: `os.date` is a restricted, zero-grant local source.
 M.CLOCK_DEFAULT_FORMAT = "%H:%M"
 M.CLOCK_TICK_MS = 60000
+-- English weekday/month names for the clock's date-time detail. The detail is
+-- built from `os.date("*t")` calendar fields instead of `%A`/`%B` so it renders
+-- identically on every supported host: the restricted `os.date` on the 0.0.24
+-- through 0.0.26 hosts implements only the numeric conversions and would pass
+-- an unsupported `%A`/`%B` through literally (bitty#2530). Indexed by the
+-- `wday` (1 = Sunday .. 7 = Saturday) and `month` (1..12) fields Lua defines.
+M.CLOCK_WEEKDAYS = {
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+}
+M.CLOCK_MONTHS = {
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+}
 -- Phase B sensor providers (bitty#2019 cpu, bitty#2011 memory, bitty#2016
 -- battery). The native component `bitty-terminal.sensors` serves the short
 -- interfaces `system.cpu` / `system.memory` / `system.battery` at `1.0.0`
@@ -1342,14 +1371,73 @@ function M.clock_cycle()
   return M.CLOCK_CYCLE_FORMATS[index]
 end
 
--- Full local date-time detail for the clock's middle click, bounded to the
--- template byte cap. Nil when `now` is unusable.
+-- Formatted local date-time detail from `os.date("*t")` calendar fields
+-- (`{ year, month, day, hour, min, sec, wday }` as Lua defines them), or nil
+-- when a field is missing or out of range. Names come from the plugin-local
+-- English tables, never from strftime conversions the host may not implement.
+function M.clock_detail_text(fields)
+  local kind = type(fields)
+  if kind ~= "table" and kind ~= "userdata" then
+    return nil
+  end
+  -- Field reads stay pcall-guarded: the host bridge can hand `os.date("*t")`
+  -- back as an indexable userdata, and a malformed one must fail closed to
+  -- nil instead of aborting the render.
+  local function field(name)
+    local ok, value = pcall(function()
+      return fields[name]
+    end)
+    if ok then
+      return value
+    end
+    return nil
+  end
+  local wday = field("wday")
+  local month = field("month")
+  local day = field("day")
+  local year = field("year")
+  local hour = field("hour")
+  local minute = field("min")
+  if not is_integer(wday) or wday < 1 or wday > 7 then
+    return nil
+  end
+  if not is_integer(month) or month < 1 or month > 12 then
+    return nil
+  end
+  for _, value in ipairs({ day, year, hour, minute }) do
+    if not is_integer(value) then
+      return nil
+    end
+  end
+  if day < 1 or day > 31 or hour < 0 or hour > 23 or minute < 0 or minute > 59 then
+    return nil
+  end
+  return string.format(
+    "%s, %02d %s %04d %02d:%02d",
+    M.CLOCK_WEEKDAYS[wday],
+    day,
+    M.CLOCK_MONTHS[month],
+    year,
+    hour,
+    minute
+  )
+end
+
+-- Full local date-time detail for the clock's middle click and hover tooltip,
+-- bounded to the template byte cap. Nil when `now` is unusable. The seconds
+-- field is deliberately omitted: the detail refreshes on the module tick
+-- (`tick_ms`, 60 s by default), so a seconds field would sit stale between
+-- ticks; the minute precision is the honest cadence.
 function M.clock_detail(now)
   if type(now) ~= "number" then
     return nil
   end
-  local ok, text = pcall(os.date, "%A, %d %B %Y %H:%M:%S", now)
-  if not ok or type(text) ~= "string" or text == "" then
+  local ok, fields = pcall(os.date, "*t", now)
+  if not ok then
+    return nil
+  end
+  local text = M.clock_detail_text(fields)
+  if text == nil or text == "" then
     return nil
   end
   return M.truncate_bytes(text, M.TEMPLATE_MAX_BYTES)
@@ -3791,6 +3879,18 @@ local function render()
   bitty.ui.update(block, bar.component)
 end
 
+-- Drops a fired one-shot handle from the pending set. One-shot timers never
+-- fire twice, so keeping the handle would grow this list for the life of the
+-- generation (a long-lived bar would accumulate one entry per tick).
+local function forget_timer(handle)
+  for index = 1, #timers do
+    if timers[index] == handle then
+      table.remove(timers, index)
+      return
+    end
+  end
+end
+
 -- Arms one timer module (bar#17): the first tick at the module cadence plus
 -- follow-up ticks at multiples of the cadence, all pre-armed while the
 -- activation window is open. Every tick re-polls providers and re-renders,
@@ -3798,10 +3898,17 @@ end
 -- post-activation `timers.create`. The first tick additionally re-arms one
 -- single tick optimistically; Plugin API v1 closes timer creation after
 -- activation (ADR 0009 LUA-OQ-12), so that re-arm fails closed on v1 hosts
--- (the pre-armed chain already covers the repeats) while a host with
--- repeating timers continues past the chain with no bar change. Follow-up
--- ticks render only, so a repeating host never accumulates parallel loops.
--- Called only while the bar is visible (pause-on-hidden).
+-- (the pre-armed chain already covers the repeats) while a host that admits
+-- post-activation timers continues past the chain with no bar change.
+-- Follow-up ticks render only, so a repeating host never accumulates parallel
+-- loops. Called only while the bar is visible (pause-on-hidden).
+--
+-- The re-arm runs before `render()`: Core aborts a timer callback that
+-- exceeds its wall budget (RC-1), and a faulting render would otherwise skip
+-- the re-arm and stop this module's cadence permanently, which freezes the
+-- band and any open hover tooltip (bitty#2530). Arming first keeps the cadence
+-- alive across one bad render; the host still contains and reports the
+-- callback fault, so a broken render stays observable instead of silent.
 local function arm_timer(name, spec, extra)
   local def = M.MODULES[name]
   local ms = M.tick_ms(def, spec.options)
@@ -3812,12 +3919,16 @@ local function arm_timer(name, spec, extra)
     extra = 0
   end
   local function arm_once(delay_ms, rearm)
-    local ok, handle = pcall(function()
-      return bitty.timers.create(delay_ms, function()
-        render()
+    local handle = nil
+    local ok = pcall(function()
+      handle = bitty.timers.create(delay_ms, function()
+        if type(handle) == "number" then
+          forget_timer(handle)
+        end
         if rearm then
           arm_once(ms, true)
         end
+        render()
       end)
     end)
     if ok and type(handle) == "number" then

@@ -119,6 +119,8 @@ export interface BarRun {
   overlay(): SceneNode | undefined;
   /** Painted text of the overlay tooltip block ("" when absent). */
   overlayText(): string;
+  /** Sets the fake `os.time` epoch (`fakeNow` option required). */
+  setNow(seconds: number): void;
   /** Number of `bitty.ui.update` calls the plugin issued on any block. */
   updates(): number;
   /** Number of `bitty.ui.update` calls that targeted the overlay block. */
@@ -185,6 +187,19 @@ export interface BarRunOptions {
   readonly audioState?: AudioStateFixture;
   /** Present = stub `audio.spectrum.spectrum()` serves these levels; absent = no meter. */
   readonly audioSpectrum?: readonly number[];
+  /**
+   * Initial epoch for a fake `os.time`, so timer-driven clock tests advance
+   * time deterministically instead of depending on the host wall clock.
+   * `BarRun.setNow` moves it.
+   */
+  readonly fakeNow?: number;
+  /**
+   * Number of band `bitty.ui.update` calls that throw before succeeding,
+   * modeling a transient host fault (budget/wall abort or bridge rejection).
+   * The timer chain must survive it: the refresh cadence is armed before the
+   * render runs (bitty#2530).
+   */
+  readonly failBandUpdates?: number;
   /** True = stub `audio.control` serves toggle/step and records calls. */
   readonly audioControl?: boolean;
   /**
@@ -322,6 +337,7 @@ export async function activateBar(
 
   const mounts: MountRecord[] = [];
   let updateCount = 0;
+  let bandUpdateFailures = options.failBandUpdates ?? 0;
   let overlayUpdateCount = 0;
   const ui = host.bitty.ui;
   // The pinned SDK mock predates plugin overlay hosting (`host-surface.ts`
@@ -543,6 +559,10 @@ export async function activateBar(
           if (record !== undefined) record.component = component;
           return true;
         }
+        if (bandUpdateFailures > 0) {
+          bandUpdateFailures -= 1;
+          throw new Error("E_UI_UNAVAILABLE: injected band update fault");
+        }
         const updated = ui.update(handle, component as never);
         if (updated && record !== undefined) record.component = component;
         return updated;
@@ -552,6 +572,11 @@ export async function activateBar(
 
   const lua = await factory.createEngine({ injectObjects: false });
   lua.global.set("bitty", bitty);
+  let fakeNow = options.fakeNow ?? null;
+  if (fakeNow !== null) {
+    lua.global.set("__bar_fake_now", fakeNow);
+    await lua.doString("os.time = function() return __bar_fake_now end");
+  }
   try {
     await lua.doString(ENTRY_SOURCE);
     host.endActivation();
@@ -576,6 +601,10 @@ export async function activateBar(
     overlayText(): string {
       const node = mounts.find((mount) => mount.slot === "overlay");
       return node === undefined ? "" : textOf(node.component);
+    },
+    setNow(seconds: number): void {
+      fakeNow = seconds;
+      lua.global.set("__bar_fake_now", fakeNow);
     },
     updates(): number {
       return updateCount;

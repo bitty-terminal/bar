@@ -182,8 +182,11 @@ describe("clock buttons", () => {
 
     expect(run.host.dispatchCommand(CLOCK, { button: "middle" })).toBe(true);
     expect(run.host.notifications).toHaveLength(1);
+    // Detail text carries minute precision: it refreshes on the clock's
+    // 60 s module tick, so a seconds field would sit stale between ticks
+    // (bitty#2530).
     expect(run.host.notifications[0]!.body).toMatch(
-      /^\w+, \d\d \w+ \d{4} \d\d:\d\d:\d\d$/,
+      /^\w+, \d\d \w+ \d{4} \d\d:\d\d$/,
     );
     expect(run.host.dispatchCommand(CLOCK, { button: "left" })).toBe(false);
   });
