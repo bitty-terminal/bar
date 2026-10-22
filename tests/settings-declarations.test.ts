@@ -205,7 +205,10 @@ describe("bar#21 activation with declared settings", () => {
     async () => {
       const run = await activate({ workspaces: TWO, settings: {} });
       // Exactly one mount, on the default bottom edge.
-      expect(run.mounts.map((mount) => mount.slot)).toEqual(["bottom"]);
+      expect(run.mounts.map((mount) => mount.slot)).toEqual([
+        "bottom",
+        "overlay",
+      ]);
       // The four keys named by bar#21 are read and defaulted: capsules paint,
       // the lone-workspace rule stays off, and the label stays bounded.
       expect(capsules(run)).toEqual([" 1* ", " 4 "]);
@@ -238,7 +241,7 @@ describe("bar#21 activation with declared settings", () => {
           label: "both",
         },
       });
-      expect(run.mounts.map((mount) => mount.slot)).toEqual(["top"]);
+      expect(run.mounts.map((mount) => mount.slot)).toEqual(["top", "overlay"]);
       expect(capsules(run)).toEqual([" 1:ws1* ", " 4:code "]);
     },
     ACTIVATION_TIMEOUT_MS,

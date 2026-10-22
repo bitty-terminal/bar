@@ -24,6 +24,7 @@ import {
   activateBar,
   type BarRun,
   ENTRY_SOURCE,
+  leaves,
   type ServiceImpl,
   textOf,
   ws,
@@ -238,8 +239,7 @@ describe("bluetooth module (bitty#2017)", () => {
         "bluetooth.state": { version: "1.0.0", impl: bluetoothState(true) },
       },
     });
-    const node = run.component();
-    const leaf = node.children![0]!;
+    const leaf = leaves(run.component())[0]!;
     expect(leaf.on_click).toEqual({
       command: "bitty-terminal.bar:detail",
       args: {
@@ -281,7 +281,7 @@ describe("bluetooth module (bitty#2017)", () => {
         },
       },
     });
-    expect(run.component().children![0]!.on_click).toEqual({
+    expect(leaves(run.component())[0]!.on_click).toEqual({
       command: "bitty-terminal.bar:detail",
       args: {
         text: "Headphones (AA:BB:CC:DD:EE:01), Keyboard (AA:BB:CC:DD:EE:02)",
@@ -303,7 +303,7 @@ describe("bluetooth module (bitty#2017)", () => {
       },
     });
     expect(painted(run)).toBe("bt off");
-    expect(run.component().children![0]!.on_click?.command).toBe(
+    expect(leaves(run.component())[0]!.on_click?.command).toBe(
       "bitty-terminal.bar:detail",
     );
   });
@@ -377,7 +377,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
       },
     });
     expect(painted(run)).toBe("75%");
-    expect(run.component().children![0]!.on_click).toEqual({
+    expect(leaves(run.component())[0]!.on_click).toEqual({
       command: "bitty-terminal.bar:backlight-step",
       args: { delta: 10 },
     });
@@ -404,7 +404,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
         },
       },
     });
-    expect(run.component().children![0]!.on_click).toEqual({
+    expect(leaves(run.component())[0]!.on_click).toEqual({
       command: "bitty-terminal.bar:backlight-step",
       args: { delta: 10 },
     });
@@ -451,7 +451,7 @@ describe("backlight module (bitty#2020, DEC-0115)", () => {
       },
     });
     expect(painted(run)).toBe("75%");
-    expect(run.component().children![0]!.on_click).toBeUndefined();
+    expect(leaves(run.component())[0]!.on_click).toBeUndefined();
   });
 
   test("an out-of-range brightness hides the module", async () => {
@@ -485,7 +485,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
       },
     });
     expect(painted(run)).toBe("inhibit:on");
-    expect(run.component().children![0]!.on_click).toEqual({
+    expect(leaves(run.component())[0]!.on_click).toEqual({
       command: "bitty-terminal.bar:idle-toggle",
     });
     expect(run.host.dispatchCommand("bitty-terminal.bar:idle-toggle")).toBe(
@@ -545,7 +545,7 @@ describe("idle-inhibit module (bitty#2020)", () => {
       },
     });
     expect(painted(readOnly)).toBe("inhibit:on");
-    expect(readOnly.component().children![0]!.on_click).toBeUndefined();
+    expect(leaves(readOnly.component())[0]!.on_click).toBeUndefined();
 
     const ungranted = await bar({
       workspaces: THREE,

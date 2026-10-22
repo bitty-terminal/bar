@@ -570,6 +570,7 @@ describe("command schema and registration", () => {
     const argsByCommand: Readonly<Record<string, Record<string, unknown>>> = {
       focus: { id: 1 },
       detail: { text: "detail" },
+      hover: { region: "bar:module:clock", phase: "enter" },
       "backlight-step": { delta: 5 },
       "audio-step": { delta: 1 },
       "microphone-step": { delta: 1 },

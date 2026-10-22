@@ -45,7 +45,8 @@ granted capabilities. A disabled entry carries a `disabled_reason`; see
 | Command                                | What it does                                                                                              | Arguments                                              | Default keybinding  |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------- |
 | `bitty-terminal.bar:focus`             | Focus a workspace by stable id (public command; capsule clicks use `workspace-action`).                   | `id` (integer, required, `>= 1`)                       | None (click target) |
-| `bitty-terminal.bar:detail`            | Show a module's detail text as a notification (the tooltip fallback).                                     | `text` (string, required, max 1024 bytes)              | None (click target) |
+| `bitty-terminal.bar:detail`            | Show a module's detail text as a notification (explicit fallback; hover uses the overlay tooltip).        | `text` (string, required, max 1024 bytes)              | None (click target) |
+| `bitty-terminal.bar:hover`             | Update the non-modal overlay tooltip on pointer enter/leave (Core band hover; no capture, no modal).      | `region` (string, required), `phase` (`enter`/`leave`) | None (hover target) |
 | `bitty-terminal.bar:workspace-action`  | Capsule target: left focuses, wheel cycles previous/next, middle/right show the workspace detail.         | `id?`, `delta?` plus host-injected `button`/`region`   | None (click target) |
 | `bitty-terminal.bar:clock-action`      | Clock target: right cycles short/date/calendar, middle shows the full date-time, left is a no-op.         | host-injected `button`/`region`                        | None (click target) |
 | `bitty-terminal.bar:network-action`    | Network target: left/middle show the link detail; right toggles the radio when a control head is granted. | host-injected `button`/`region`                        | None (click target) |
@@ -77,9 +78,9 @@ user-owned; the plugin never writes settings.
 | `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Live            |
 | `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Live            |
 | `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, or `"nerd"`; an unknown value falls back to `"ascii"`.                   | Live            |
-| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group.                                                                                           | Live            |
-| `modules_center` | string array | `["clock"]`                            | Ordered module names for the second group (rendered next; v1 has no true centering).                                               | Live            |
-| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the third group (rendered last; v1 has no right alignment).                                               | Live            |
+| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group; anchored to the left inset edge.                                                          | Live            |
+| `modules_center` | string array | `["clock"]`                            | Ordered module names for the center group; centered on the full band row (never "after left").                                     | Live            |
+| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the right group; flush to the right inset edge.                                                           | Live            |
 | `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Live            |
 | `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                        | Live            |
 | `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                      | Live            |
@@ -117,10 +118,15 @@ set `modules_right = {}` to drop the whole group; add `pulseaudio`,
 `microphone`, `bluetooth`, `backlight`, `idle`, or `spectrum` only when the
 matching provider and capability grant are available.
 
-`modules_left`, `modules_center`, and `modules_right` keep their declarative
-order. True left/center/right alignment needs a Core spacer/flex or anchor
-node (bitty-terminal/bitty#2411); the bar deliberately does not simulate it
-with padding strings.
+`modules_left`, `modules_center`, and `modules_right` are true anchored groups
+(Core #2411): the bar emits one child `Row` per non-empty group with
+`anchor = "left" | "center" | "right"`, and Core resolves the placement
+against the live band width. The center group is centered on the full row,
+the right group is flush to the right inset edge, and narrow widths clip
+deterministically (left first, then right, then center) without overlapping.
+The plugin never simulates alignment with padding strings. On a host without
+Core #2411 the `anchor` key is ignored and the groups flow left-to-right in
+declaration order, so the bar still paints.
 
 The host parses plugin settings at activation; `config.reloaded` re-reads
 them and re-renders, so `show`, labels, icons, and the module plan update
@@ -155,15 +161,15 @@ workspace; bind other bar commands or use the click targets.
 
 ## Troubleshooting
 
-| Symptom / error                          | Meaning                                                                                                                                                                               | What to do                                                                                                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `E_INCOMPATIBLE`                         | The host application or Plugin API version is outside `[compat]`; activation is disabled with no partial mount.                                                                       | Upgrade Bitty or install a bar revision whose ranges admit your host. Do not edit the manifest ranges.                                                             |
-| `E_SETTINGS_UNDECLARED`                  | The entry point read a settings key absent from `[settings]`. This is a plugin defect.                                                                                                | Every read key is declared; if it still appears, report it with `bitty plugin info bitty-terminal.bar` and run `bitty --safe` meanwhile.                           |
-| Capability denied                        | `E_CAPABILITY_DENIED` (class `runtime`): `ui.rich` hides the band, `workspace.read` empties it, `workspace.control` makes clicks no-ops, `platform.notify` drops the detail fallback. | Reinstall and approve the grants, or inspect granted versus requested capabilities with `bitty plugin list`. A missing sensor/device grant only hides that module. |
-| Control click notifies instead of acting | The control head is ungranted or the call was denied (`E_NOT_PERMITTED`); the click degrades to one notification by design.                                                           | Grant the matching `*.control` capability at install/consent time, or keep the read-only render.                                                                   |
-| Bar is missing                           | `show = false`, a lone workspace with `show_single = false` and no occupied scratchpad, or lazy activation before the first workspace event.                                          | Check the settings file and `bitty plugin list`; open or focus a workspace to trigger the first render.                                                            |
-| Two bars                                 | Core still draws `workspace.show_bar` while the plugin paints its band.                                                                                                               | Set `workspace.show_bar = false` in the main configuration.                                                                                                        |
-| `E_SPAWN_FAILED`                         | Not applicable: this plugin spawns no process and opens no socket.                                                                                                                    | —                                                                                                                                                                  |
+| Symptom / error                          | Meaning                                                                                                                                                                                                                          | What to do                                                                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `E_INCOMPATIBLE`                         | The host application or Plugin API version is outside `[compat]`; activation is disabled with no partial mount.                                                                                                                  | Upgrade Bitty or install a bar revision whose ranges admit your host. Do not edit the manifest ranges.                                                             |
+| `E_SETTINGS_UNDECLARED`                  | The entry point read a settings key absent from `[settings]`. This is a plugin defect.                                                                                                                                           | Every read key is declared; if it still appears, report it with `bitty plugin info bitty-terminal.bar` and run `bitty --safe` meanwhile.                           |
+| Capability denied                        | `E_CAPABILITY_DENIED` (class `runtime`): `ui.rich` hides the band, `workspace.read` empties it, `workspace.control` makes clicks no-ops, `ui.overlay` drops only the hover tooltip, `platform.notify` drops the detail fallback. | Reinstall and approve the grants, or inspect granted versus requested capabilities with `bitty plugin list`. A missing sensor/device grant only hides that module. |
+| Control click notifies instead of acting | The control head is ungranted or the call was denied (`E_NOT_PERMITTED`); the click degrades to one notification by design.                                                                                                      | Grant the matching `*.control` capability at install/consent time, or keep the read-only render.                                                                   |
+| Bar is missing                           | `show = false`, a lone workspace with `show_single = false` and no occupied scratchpad, or lazy activation before the first workspace event.                                                                                     | Check the settings file and `bitty plugin list`; open or focus a workspace to trigger the first render.                                                            |
+| Two bars                                 | Core still draws `workspace.show_bar` while the plugin paints its band.                                                                                                                                                          | Set `workspace.show_bar = false` in the main configuration.                                                                                                        |
+| `E_SPAWN_FAILED`                         | Not applicable: this plugin spawns no process and opens no socket.                                                                                                                                                               | —                                                                                                                                                                  |
 
 ## Workspace bar
 
@@ -205,9 +211,11 @@ workspace; bind other bar commands or use the click targets.
 ### Modules (declarative)
 
 Settings declare an ordered module list, modeled on Waybar's
-`modules-left/center/right`. Phase A renders the three groups left-to-right into
-one inset row: a true center/right alignment needs a Spacer/flex node that v1
-does not expose (Phase C), so the groups keep their declarative order.
+`modules-left/center/right`. Each non-empty group is one anchored `Row`
+under the scene root; Core resolves `left`/`center`/`right` against the live
+band width, so the center group is truly centered and the right group is
+flush to the right inset edge. The groups keep their declarative order, and a
+narrow band clips them deterministically instead of overlapping.
 
 Each listed name resolves against the in-plugin module registry. A module
 renders atoms `{ text, bold?, fg?, on_click?, on_scroll?, tooltip?, region? }`
@@ -293,15 +301,31 @@ probed optionally and an absent method fails closed. The microphone module
 itself also hides until the provider reports source fields.
 
 ³ With its control head granted, the left click keeps the existing toggle/step
-behavior (`bluetooth-toggle`, `backlight-step`, `idle-toggle`). While read-only,
-`bluetooth` binds the bonded-device detail whenever its snapshot carries
-devices, but `backlight` and `idle` bind detail only when their `tooltip`
-option is set; without that option the atom is non-interactive.
+behavior (`bluetooth-toggle`, `backlight-step`, `idle-toggle`). Independently
+of the click binding, the module's detail text (the bonded-device list for
+`bluetooth`, the `tooltip` option for `backlight`/`idle`) is the hover
+tooltip; a read-only module also keeps the `detail` notification fallback on
+click.
 
-Hover is still the v1 fallback: a module with detail text but no command binds
-`bitty-terminal.bar:detail`, which shows a notification. Real hover tooltips
-need Core pointer-enter/leave and overlay anchoring (bitty-terminal/bitty#2411)
-and are not faked with notifications here.
+### Hover detail
+
+Every rendered module atom carries an `on_hover` binding with a stable
+per-module region id (`bar:module:<name>`, plus `:<n>` for a repeated name in
+one plan). Core resolves the live region under the pointer and dispatches the
+registered `hover` command with `phase = "enter"` or `"leave"`; no pointer
+coordinates reach the plugin. On enter the bar writes the module's existing
+detail text (cpu/memory/battery readings, the clock date-time, the workspace
+strip, the audio port, the bonded-device list, or a module's `tooltip`
+option) into its `overlay`-slot block as one bounded plain-text row; on leave
+it clears it. Core anchors the block to the live module region and presents
+it as a non-modal tooltip.
+
+Hover is presentation-only: it never captures input, never sets modal state,
+and never uses an OS notification. The tooltip disappears on leave, focus
+loss, bar hide, or when the module no longer exists after a re-render. A
+module with no detail text still has a hover region that round-trips
+enter/leave and simply shows no tooltip. On hosts without Core #2411 the
+`on_hover` key is ignored, so clicks and wheel steps keep working unchanged.
 
 ### Icons and display cells
 
@@ -352,19 +376,19 @@ option logic itself is unchanged and covered by the pure suites:
 | ------------ | ---------------- | ------- | -------------------- | ----------------------------------------------------------------- |
 | `clock`      | `format`         | string  | `"%H:%M"`            | `os.date` format.                                                 |
 | `clock`      | `tick_ms`        | integer | `60000`              | Timer cadence, clamped to the `200` ms floor.                     |
-| `clock`      | `tooltip`        | string  | none                 | Reserved; the middle click shows the live date-time detail.       |
+| `clock`      | `tooltip`        | string  | none                 | Hover / middle-click detail; default the live date-time.          |
 | `pulseaudio` | `format`         | string  | none                 | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
 | `pulseaudio` | `show_port`      | boolean | `true`               | Append the truncated port to the text.                            |
 | `pulseaudio` | `port_max_chars` | integer | `16`                 | Port display width, `1..64`.                                      |
 | `pulseaudio` | `tick_ms`        | integer | `2000`               | State poll cadence, clamped to the `200` ms floor.                |
-| `pulseaudio` | `tooltip`        | string  | none                 | Reserved for Phase C real tooltips (the port rides it today).     |
+| `pulseaudio` | `tooltip`        | string  | none                 | Hover tooltip; default the full port name (text may truncate it). |
 | `microphone` | `format`         | string  | `"{icon} {volume}%"` | Keys: `{icon}`, `{volume}`, `{muted}`.                            |
 | `microphone` | `tick_ms`        | integer | `2000`               | Source poll cadence (same snapshot as `pulseaudio`).              |
 | `microphone` | `tooltip`        | string  | none                 | Default: `Microphone 70% (muted)`.                                |
 | `spectrum`   | `buckets`        | integer | `8`                  | Sample width, `1..32` (out-of-range falls back to `8`).           |
 | `spectrum`   | `tick_ms`        | integer | `250`                | Meter cadence (4 fps), clamped to the `200` ms floor.             |
 | `spectrum`   | `paused`         | boolean | `false`              | Freeze the last row without polling.                              |
-| `spectrum`   | `tooltip`        | string  | none                 | Detail text shown via the `detail` notification.                  |
+| `spectrum`   | `tooltip`        | string  | none                 | Hover tooltip text; no tooltip when unset.                        |
 
 ### Modules (Phase B devices)
 
@@ -387,10 +411,12 @@ narrowed grant takes effect without restart.
   and no provider ships in 0.0.26, so a live right click falls back to detail;
   the toggle path is mock-tested only.
   Options: `format` (`{icon}`, `{link}`, `{down}`, `{up}`, `{essid}`),
-  `tick_ms` (clamped at or above 3 s), `tooltip` (reserved; live detail wins).
+  `tick_ms` (clamped at or above 3 s), `tooltip` (hover; default the live
+  link detail).
 - `bluetooth` (timer, 5 s floor): radio state plus bonded-device counts
   (`bt on (1/2)`; alias/address rendering stays Lua-side). Read-only by
-  default: the bonded-device list rides the `detail` tooltip fallback. With
+  default: the bonded-device list is the hover tooltip and the `detail` click
+  fallback. With
   `toggle = true` and the `bluetooth.control` head granted, the click flips
   power via `set_power` only; deny defaults to the read-only render.
   Options: `format` (`{icon}`, `{status}`, `{connected}`, `{total}`, `{powered}`),
@@ -425,23 +451,23 @@ stale past the horizon, revoked, or malformed — a hidden sensor never hides
 the bar. Thresholds and icon buckets evaluate Lua-side; the provider sends
 raw numbers and states only:
 
-| Module    | Option     | Type    | Default                | Notes                                                       |
-| --------- | ---------- | ------- | ---------------------- | ----------------------------------------------------------- |
-| `cpu`     | `format`   | string  | `"{total}%"`           | Keys: `{icon}`, `{total}`, `{total_pct}` (rounded).         |
-| `cpu`     | `warning`  | number  | `80`                   | At-or-above reads `warning`; needs `warning` < `critical`.  |
-| `cpu`     | `critical` | number  | `90`                   | At-or-above reads `critical`.                               |
-| `cpu`     | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
-| `cpu`     | `tooltip`  | string  | none                   | Default detail: `CPU 42% (8 cores)`.                        |
-| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{icon}`, `{pct}`, `{used}`, `{total}` (GiB), swap.   |
-| `memory`  | `warning`  | number  | `80`                   | Same hot direction as `cpu`.                                |
-| `memory`  | `critical` | number  | `90`                   | Same hot direction as `cpu`.                                |
-| `memory`  | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
-| `memory`  | `tooltip`  | string  | none                   | Default: `Memory 5/8 GiB (63%)`, plus swap when reported.   |
-| `battery` | `format`   | string  | `"{icon} {capacity}%"` | Keys: `{icon}`, `{capacity}`, `{state}`.                    |
-| `battery` | `warning`  | number  | `30`                   | At-or-below (discharging only) reads `warning`.             |
-| `battery` | `critical` | number  | `15`                   | At-or-below (discharging only) reads `critical`.            |
-| `battery` | `tick_ms`  | integer | `5000`                 | Poll cadence at the provider ceiling; `1000` ms floor.      |
-| `battery` | `tooltip`  | string  | none                   | Default: `Battery 63% discharging`, plus `W` and time left. |
+| Module    | Option     | Type    | Default                | Notes                                                            |
+| --------- | ---------- | ------- | ---------------------- | ---------------------------------------------------------------- |
+| `cpu`     | `format`   | string  | `"{total}%"`           | Keys: `{icon}`, `{total}`, `{total_pct}` (rounded).              |
+| `cpu`     | `warning`  | number  | `80`                   | At-or-above reads `warning`; needs `warning` < `critical`.       |
+| `cpu`     | `critical` | number  | `90`                   | At-or-above reads `critical`.                                    |
+| `cpu`     | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.           |
+| `cpu`     | `tooltip`  | string  | none                   | Hover detail: `CPU 42% (8 cores)` by default.                    |
+| `memory`  | `format`   | string  | `"{pct}%"`             | Keys: `{icon}`, `{pct}`, `{used}`, `{total}` (GiB), swap.        |
+| `memory`  | `warning`  | number  | `80`                   | Same hot direction as `cpu`.                                     |
+| `memory`  | `critical` | number  | `90`                   | Same hot direction as `cpu`.                                     |
+| `memory`  | `tick_ms`  | integer | `2000`                 | Poll cadence at the provider ceiling; `1000` ms floor.           |
+| `memory`  | `tooltip`  | string  | none                   | Hover detail: `Memory 5/8 GiB (63%)`, plus swap when reported.   |
+| `battery` | `format`   | string  | `"{icon} {capacity}%"` | Keys: `{icon}`, `{capacity}`, `{state}`.                         |
+| `battery` | `warning`  | number  | `30`                   | At-or-below (discharging only) reads `warning`.                  |
+| `battery` | `critical` | number  | `15`                   | At-or-below (discharging only) reads `critical`.                 |
+| `battery` | `tick_ms`  | integer | `5000`                 | Poll cadence at the provider ceiling; `1000` ms floor.           |
+| `battery` | `tooltip`  | string  | none                   | Hover detail: `Battery 63% discharging`, plus `W` and time left. |
 
 With `icons = "ascii"`, battery icons are five ASCII buckets by capacity
 (`[    ]` through `[====]`) with a `+` mark while charging. The `pua` and
@@ -507,9 +533,12 @@ scratchpad segment.
 
 ### Capabilities
 
-`ui.rich` (mount and update the band), `workspace.read` (`list` and the
-`workspace.*` events), `workspace.control` (`focus` for clicks and wheel
-cycling), and `platform.notify` (the tooltip→notify `detail` fallback), plus
+`ui.rich` (mount and update the band), `ui.overlay` (mount the
+presentation-only overlay tooltip; no `ui.overlay.focus`, so no input capture),
+`workspace.read` (`list` and the `workspace.*` events),
+`workspace.control` (`focus` for clicks and wheel cycling), and
+`platform.notify` (the explicit `detail` notification fallback and control
+denials; hover never uses it), plus
 the 14 Phase B heads: `platform.cpu-read`/`memory-read`/`battery-read`
 (sensor providers), `platform.network.read`/`essid.read`,
 `platform.bluetooth.read/.control`, `platform.backlight.read/.control`,
@@ -533,13 +562,13 @@ entries supply the host negotiation versions.
 
 Gaps in the current host and provider set, not in this plugin:
 
-- True group alignment (`modules_left` at the left edge, the center group
-  centered, `modules_right` at the right edge) needs a Core spacer/flex or
-  anchor node. Tracked in bitty-terminal/bitty#2411; the bar keeps the
-  declarative order and does not fake alignment with padding strings.
-- Hover detail needs bounded Core pointer-enter/leave events plus an anchored
-  overlay. Until then the `bar:detail` notification is the only fallback; no
-  fake tooltip is painted.
+- True group alignment and hover detail require Core #2411 (band anchors and
+  bounded hover dispatch, targeted for the 0.0.26 train via PR #2423). On an
+  older host the
+  `anchor` and `on_hover` keys are ignored: the groups flow left-to-right and
+  no tooltip appears, while clicks and wheel steps keep working. `ui.overlay`
+  is still requested so a host that ignores hover mounts the block unused;
+  hover fails closed if the grant is denied.
 - The 0.0.26 audio provider reports no source (microphone) level/mute and
   exposes no source control, so the `microphone` module hides and its
   commands fail closed until that provider surface lands.
@@ -571,6 +600,7 @@ Gaps in the current host and provider set, not in this plugin:
 | `tests/audio.test.ts`         | Audio module tests (pulseaudio state/control, spectrum meter, rate bounds).  |
 | `tests/icons.test.ts`         | Icon maps, ASCII fallback, format composition, display-cell width.           |
 | `tests/buttons.test.ts`       | Per-button click/wheel bindings for every region-aware module.               |
+| `tests/hover.test.ts`         | Anchored group shape, unique hover regions, overlay tooltip lifecycle.       |
 | `justfile`                    | Quality gates with pinned tool versions.                                     |
 
 ## Development

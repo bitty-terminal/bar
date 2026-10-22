@@ -30,37 +30,37 @@ export const ENTRY_SOURCE = readFileSync(
 /** Capabilities the manifest requests; tests grant all of them by default. */
 export const BAR_CAPABILITIES = [
   "ui.rich",
+  "ui.overlay",
   "workspace.read",
   "workspace.control",
   "platform.notify",
 ] as const;
 
 export const FOCUS_COMMAND = "bitty-terminal.bar:focus";
+export const HOVER_COMMAND = "bitty-terminal.bar:hover";
 
-/** Scene node shape the plugin emits (v1 Text/Row subset). */
+/** One command binding, with the optional Core #2248/#2411 region identity. */
+export interface Binding {
+  readonly command: string;
+  readonly args?: Readonly<Record<string, unknown>>;
+  readonly region?: {
+    readonly id: string;
+    readonly kind: string;
+  };
+}
+
+/** Scene node shape the plugin emits (v1 Text/Row subset plus #2411). */
 export interface SceneNode {
   readonly kind: string;
   readonly text?: string;
   readonly children?: readonly SceneNode[];
+  readonly anchor?: string;
   readonly bold?: boolean;
   readonly fg?: string;
   readonly bg?: string;
-  readonly on_click?: {
-    readonly command: string;
-    readonly args?: Readonly<Record<string, unknown>>;
-    readonly region?: {
-      readonly id: string;
-      readonly kind: string;
-    };
-  };
-  readonly on_scroll?: {
-    readonly command: string;
-    readonly args?: Readonly<Record<string, unknown>>;
-    readonly region?: {
-      readonly id: string;
-      readonly kind: string;
-    };
-  };
+  readonly on_click?: Binding;
+  readonly on_scroll?: Binding;
+  readonly on_hover?: Binding;
 }
 
 export interface MountRecord {
@@ -115,8 +115,14 @@ export interface BarRun {
   readonly mounts: MountRecord[];
   /** Last component of the single bar block. */
   component(): SceneNode;
-  /** Number of `bitty.ui.update` calls the plugin issued on the block. */
+  /** Last component of the `overlay` tooltip block, if mounted. */
+  overlay(): SceneNode | undefined;
+  /** Painted text of the overlay tooltip block ("" when absent). */
+  overlayText(): string;
+  /** Number of `bitty.ui.update` calls the plugin issued on any block. */
   updates(): number;
+  /** Number of `bitty.ui.update` calls that targeted the overlay block. */
+  overlayUpdates(): number;
   /** Audio control calls the plugin issued through the stubbed broker. */
   audioControl(): {
     readonly toggles: number;
@@ -316,7 +322,18 @@ export async function activateBar(
 
   const mounts: MountRecord[] = [];
   let updateCount = 0;
+  let overlayUpdateCount = 0;
   const ui = host.bitty.ui;
+  // The pinned SDK mock predates plugin overlay hosting (`host-surface.ts`
+  // still rejects the `overlay` slot with `E_UI_UNAVAILABLE`), while the
+  // current Core host presents it as the non-modal tooltip surface
+  // (Core #2411). Until the SDK pin advances, the harness stands in for that
+  // host path: capability-gate the mount exactly like the host, then retain
+  // the component so tests can read what the tooltip would paint. Every other
+  // slot still runs through the mock's real validation and budgets.
+  const grants = options.grants ?? BAR_CAPABILITIES;
+  const overlayHandles = new Set<number>();
+  let nextOverlayHandle = -1;
   const bridged = nilSafe(host.bitty);
   const bridgedServices = bridged.services as {
     readonly get: (iface: string, opts: unknown) => unknown;
@@ -501,14 +518,32 @@ export async function activateBar(
     },
     ui: {
       mount: (slot: string, component: SceneNode): number => {
+        if (slot === "overlay") {
+          if (!grants.includes("ui.rich")) {
+            throw new Error("E_CAPABILITY_DENIED: ui.rich");
+          }
+          if (!grants.includes("ui.overlay")) {
+            throw new Error("E_CAPABILITY_DENIED: ui.overlay");
+          }
+          const handle = nextOverlayHandle;
+          nextOverlayHandle -= 1;
+          overlayHandles.add(handle);
+          mounts.push({ slot, handle, component });
+          return handle;
+        }
         const handle = ui.mount(slot, component as never);
         mounts.push({ slot, handle, component });
         return handle;
       },
       update: (handle: number, component: SceneNode): boolean => {
-        const updated = ui.update(handle, component as never);
         updateCount += 1;
         const record = mounts.find((entry) => entry.handle === handle);
+        if (overlayHandles.has(handle)) {
+          overlayUpdateCount += 1;
+          if (record !== undefined) record.component = component;
+          return true;
+        }
+        const updated = ui.update(handle, component as never);
         if (updated && record !== undefined) record.component = component;
         return updated;
       },
@@ -529,13 +564,24 @@ export async function activateBar(
     lua,
     mounts,
     component(): SceneNode {
-      if (mounts.length !== 1) {
-        throw new Error(`expected exactly one bar block, got ${mounts.length}`);
+      const bands = mounts.filter((mount) => mount.slot !== "overlay");
+      if (bands.length !== 1) {
+        throw new Error(`expected exactly one bar block, got ${bands.length}`);
       }
-      return mounts[0]!.component;
+      return bands[0]!.component;
+    },
+    overlay(): SceneNode | undefined {
+      return mounts.find((mount) => mount.slot === "overlay")?.component;
+    },
+    overlayText(): string {
+      const node = mounts.find((mount) => mount.slot === "overlay");
+      return node === undefined ? "" : textOf(node.component);
     },
     updates(): number {
       return updateCount;
+    },
+    overlayUpdates(): number {
+      return overlayUpdateCount;
     },
     audioControl(): {
       readonly toggles: number;

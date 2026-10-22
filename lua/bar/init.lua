@@ -23,9 +23,17 @@
 -- `idle`), the sensor modules (cpu/memory/battery), and the audio pair
 -- (`pulseaudio` state/control plus the `spectrum` cava-lite meter), each
 -- registering here unchanged when a provider lands. Wheel steps ride
--- the `on_scroll` vehicle (bitty#2008, CTX-1190, host-computed `delta`);
--- true centering (`modules_center`), real tooltips, and the tray need new
--- Core vehicles and are Phase C. No new Core API is introduced here.
+-- the `on_scroll` vehicle (bitty#2008, CTX-1190, host-computed `delta`).
+--
+-- Phase C (Core #2411 / bar#30) lands the two Core-owned vehicles the chassis
+-- was waiting for: a band root `Row` may declare `anchor = "left" | "center"
+-- | "right"` on each direct child, so `modules_left` / `modules_center` /
+-- `modules_right` are true groups resolved against the band width (never a
+-- padding string), and an `on_hover` binding dispatches a registered command
+-- on pointer enter/leave, which this plugin turns into a non-modal overlay
+-- tooltip anchored by Core to the live module region. No new Core API is
+-- introduced here, hover carries no coordinates, and neither vehicle
+-- captures input or sets modal state.
 --
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
@@ -39,6 +47,7 @@ local PLUGIN_ID = "bitty-terminal.bar"
 -- reservation in `bitty-plugin.toml`. Click bindings carry the qualified name.
 local FOCUS_COMMAND_ID = "focus"
 local DETAIL_COMMAND_ID = "detail"
+local HOVER_COMMAND_ID = "hover"
 local BLUETOOTH_TOGGLE_COMMAND_ID = "bluetooth-toggle"
 local BACKLIGHT_STEP_COMMAND_ID = "backlight-step"
 local IDLE_TOGGLE_COMMAND_ID = "idle-toggle"
@@ -54,9 +63,16 @@ local NETWORK_ACTION_COMMAND_ID = "network-action"
 local MICROPHONE_ACTION_COMMAND_ID = "microphone-action"
 local MICROPHONE_STEP_COMMAND_ID = "microphone-step"
 M.FOCUS_COMMAND = PLUGIN_ID .. ":" .. FOCUS_COMMAND_ID
--- Tooltip-without-command fallback: the click shows the module's detail text
--- as a notification (`bitty.notify.show`) because v1 has no tooltip vehicle.
+-- Explicit detail-command fallback: a click shows the module's detail text as
+-- a notification (`bitty.notify.show`). Pointer hover opens the overlay
+-- tooltip instead (Core #2411); the notification path stays for a read-only
+-- module's left/middle/right click and for explicit user mappings.
 M.DETAIL_COMMAND = PLUGIN_ID .. ":" .. DETAIL_COMMAND_ID
+-- Hover dispatcher (Core #2411): the host invokes it on pointer enter/leave
+-- with the stable module region id and `phase = "enter" | "leave"`. It only
+-- updates this plugin's `overlay` block; it never captures input, sets modal
+-- state, or notifies.
+M.HOVER_COMMAND = PLUGIN_ID .. ":" .. HOVER_COMMAND_ID
 -- Device-module control commands (Phase B): each calls exactly one control
 -- method on its own control interface and never anything else.
 M.BLUETOOTH_TOGGLE_COMMAND = PLUGIN_ID .. ":" .. BLUETOOTH_TOGGLE_COMMAND_ID
@@ -115,10 +131,18 @@ M.LABEL_DIAGNOSTIC_SUFFIX = "; using 'index'."
 M.ICONS_DIAGNOSTIC_PREFIX = "Unified Bar: unknown icons "
 M.ICONS_DIAGNOSTIC_SUFFIX = "; using 'ascii'."
 
--- Module-group settings keys (Waybar `modules-*`). Phase A renders left, then
--- center, then right into one inset row: a true center/right alignment needs a
--- Spacer/flex node (Phase C), so the groups keep their declarative order.
+-- Module-group settings keys (Waybar `modules-*`) and the band anchor each
+-- group declares. Core #2411 resolves the anchors against the band width:
+-- `left` starts at the inset edge, `center` centers on the full row (never
+-- "after left"), and `right` ends at the opposite inset edge. The plugin
+-- emits placement only; narrow-width clipping and over-subscription stay
+-- Core-owned.
 M.MODULE_GROUPS = { "modules_left", "modules_center", "modules_right" }
+M.GROUP_ANCHORS = {
+  modules_left = "left",
+  modules_center = "center",
+  modules_right = "right",
+}
 -- Shipped default plan (fresh install): workspace capsules on the left, the
 -- clock in the center group, and the system indicators on the right. Provider
 -- modules hide fail closed when their broker provider is absent or ungranted,
@@ -130,8 +154,23 @@ M.DEFAULT_MODULE_PLAN = {
   modules_center = { "clock" },
   modules_right = { "network", "cpu", "memory", "battery" },
 }
--- Modules are joined by a single space when more than one renders.
+-- Modules are joined by a single space when more than one renders in the
+-- same group. Groups are placed by Core anchors, so no separator is emitted
+-- between groups (a manual pad would break true centering and right flush).
 M.MODULE_GAP = " "
+
+-- Hover tooltip (Core #2411). One stable region id per rendered module
+-- instance (`bar:module:<name>` plus a `:<n>` suffix for a repeated name), so
+-- a pointer transition names exactly one module. Region ids use the Core
+-- alphabet `[a-z0-9._:-]` and stay well inside its 64-byte bound.
+M.HOVER_REGION_PREFIX = "bar:module:"
+-- Overlay tooltip text bound (UTF-8 bytes): one bounded, plain-text row, so
+-- a hostile or verbose detail can never grow the overlay surface. Detail
+-- text is whitespace-collapsed and control bytes are replaced with spaces.
+M.HOVER_DETAIL_MAX_BYTES = 256
+-- Overlay slot the host presents as a non-modal tooltip while a declared
+-- module region is hovered and the plugin owns no input capture.
+M.HOVER_SLOT = "overlay"
 
 -- Per-module timer floor (ms). v1 `bitty.timers.create` is one-shot and
 -- creation is activation-window-only (ADR 0009 LUA-OQ-12), so a repeating
@@ -198,7 +237,7 @@ M.BATTERY_ICONS = { "[    ]", "[=   ]", "[==  ]", "[=== ]", "[====]" }
 M.BATTERY_CHARGING_MARK = "+"
 -- Template renderer cap (bytes) for a bounded `{key}` substitution.
 M.TEMPLATE_MAX_BYTES = 1024
--- Notification title for the tooltip fallback.
+-- Notification title for the explicit detail fallback and control denials.
 M.TOOLTIP_TITLE = "Unified Bar"
 
 -- `states` → theme tokens (host-resolved; never a raw color). A module picks a
@@ -236,7 +275,7 @@ M.VOLUME_MAX_PCT = 100
 M.VOLUME_STEP_MAX_PCT = 10 -- VOLUME_STEP_MAX_PCT (over-bound denied, never clamped)
 M.AUDIO_PORT_MAX_BYTES = 64 -- AUDIO_MAX_PORT_BYTES (validation bound)
 -- Port display width (characters) when the text carries the port. The full
--- port name stays in the tooltip for Phase C real tooltips.
+-- port name stays in the hover tooltip.
 M.AUDIO_PORT_DISPLAY_CHARS = 16
 -- Volume icons (portable ASCII; Nerd-Font glyphs are a theme concern, not
 -- data). Thresholds mirror Waybar-style low/med/high bands.
@@ -910,13 +949,74 @@ function M.click_button(args)
   return M.BUTTON_DEFAULT
 end
 
--- Notification payload for the tooltip→notify fallback, or nil when there is
+-- Notification payload for the explicit detail fallback, or nil when there is
 -- no detail text to show.
 function M.tooltip_payload(text)
   if type(text) ~= "string" or text == "" then
     return nil
   end
   return { title = M.TOOLTIP_TITLE, body = text }
+end
+
+-- Stable hover region id for one module instance. The ordinal separates a
+-- module name listed twice in one plan; module names come from the fixed
+-- registry, so every character stays inside the Core region alphabet.
+function M.hover_region_id(name, ordinal)
+  if type(name) ~= "string" or name == "" then
+    return nil
+  end
+  local id = M.HOVER_REGION_PREFIX .. name
+  if is_integer(ordinal) and ordinal > 1 then
+    id = id .. ":" .. ordinal
+  end
+  if not M.valid_region_id(id) then
+    return nil
+  end
+  return id
+end
+
+-- Hover binding for one module region: the same binding shape as `on_click`,
+-- plus the region identity `on_hover` requires. The host injects `region` and
+-- `phase` at dispatch; declaring `region` here keeps the scene readable.
+function M.hover_binding(region)
+  if not M.valid_region_id(region) then
+    return nil
+  end
+  return {
+    command = M.HOVER_COMMAND,
+    args = { region = region },
+    region = { id = region, kind = "module" },
+  }
+end
+
+-- Overlay tooltip text for a module detail: plain, single-line, bounded, or
+-- nil when there is nothing usable. Control bytes (including newlines and
+-- tabs) become spaces through `M.compact`, then the result is cut on a UTF-8
+-- character boundary.
+function M.hover_detail_text(text)
+  if type(text) ~= "string" or text == "" then
+    return nil
+  end
+  local flat = string.gsub(text, "%c", " ")
+  flat = M.compact(flat)
+  flat = M.truncate_bytes(flat, M.HOVER_DETAIL_MAX_BYTES)
+  if flat == "" then
+    return nil
+  end
+  return flat
+end
+
+-- First usable detail text among one module's rendered atoms, bounded like
+-- the overlay itself. A module without detail returns nil; its hover region
+-- still round-trips enter/leave and clears the tooltip.
+function M.atoms_detail(atoms)
+  for _, atom in ipairs(atoms) do
+    local detail = M.hover_detail_text(atom.tooltip)
+    if detail ~= nil then
+      return detail
+    end
+  end
+  return nil
 end
 
 -- Bounded diagnostic body for a rejected `label` value, or nil when the value
@@ -1180,11 +1280,18 @@ local function segment_atom(segment)
   return atom
 end
 
--- Workspaces module render: the capsule strip as chassis atoms.
+-- Workspaces module render: the capsule strip as chassis atoms. The strip
+-- detail (the same text middle/right click shows) rides the first atom as the
+-- module's hover tooltip; every capsule still carries its own item region for
+-- clicks.
 function M.workspaces_atoms(rows, opts)
   local atoms = {}
   for _, segment in ipairs(M.segments(rows, opts)) do
     atoms[#atoms + 1] = segment_atom(segment)
+  end
+  local detail = M.workspace_detail(rows, nil)
+  if detail ~= nil and atoms[1] ~= nil then
+    atoms[1].tooltip = detail
   end
   return atoms
 end
@@ -1266,8 +1373,12 @@ function M.clock_atoms(ctx)
   local text = M.compose_icon(M.clock_icon(options.icons), M.clock_text(format, ctx.now))
   local atom = { text = text }
   atom.on_click = M.click_binding(M.CLOCK_ACTION_COMMAND, {}, "clock")
-  if type(options.tooltip) == "string" and options.tooltip ~= "" then
-    atom.tooltip = options.tooltip
+  local detail = options.tooltip
+  if type(detail) ~= "string" or detail == "" then
+    detail = M.clock_detail(ctx.now)
+  end
+  if detail ~= nil then
+    atom.tooltip = detail
   end
   return { atom }
 end
@@ -1881,16 +1992,20 @@ end
 function M.network_atoms(ctx)
   local options = ctx.options or {}
   local data = M.service_data(M.resolve_service(M.NETWORK_STATE_IFACE))
-  local text = M.network_text(data, M.essid_value(), options)
+  local essid = M.essid_value()
+  local text = M.network_text(data, essid, options)
   if text == nil then
     return {}
   end
-  return {
-    {
-      text = text,
-      on_click = M.click_binding(M.NETWORK_ACTION_COMMAND, {}, "network"),
-    },
+  local atom = {
+    text = text,
+    on_click = M.click_binding(M.NETWORK_ACTION_COMMAND, {}, "network"),
   }
+  local detail = M.network_text(data, essid, {})
+  if detail ~= nil then
+    atom.tooltip = detail
+  end
+  return { atom }
 end
 
 -- Optional network control head (bar#30 "right toggles the Wi-Fi radio when
@@ -2038,8 +2153,8 @@ end
 
 -- Bluetooth module render: the radio readout, clickable for the power toggle
 -- only when the toggle option is set and the separate control interface
--- resolves (deny defaults to a read-only render). Without a toggle binding,
--- device detail rides the tooltip→notify fallback.
+-- resolves (deny defaults to a read-only render). The bonded-device detail is
+-- always the hover tooltip (and the click fallback when read-only).
 function M.bluetooth_atoms(ctx)
   local options = ctx.options or {}
   local data = M.service_data(M.resolve_service(M.BLUETOOTH_STATE_IFACE))
@@ -2054,11 +2169,10 @@ function M.bluetooth_atoms(ctx)
       atom.on_click = M.click_binding(M.BLUETOOTH_TOGGLE_COMMAND)
     end
   end
-  if atom.on_click == nil then
-    local detail = M.bluetooth_detail(data)
-    if detail ~= nil then
-      atom.tooltip = detail
-    end
+  -- The bonded-device detail is hover data regardless of any click binding.
+  local detail = M.bluetooth_detail(data)
+  if detail ~= nil then
+    atom.tooltip = detail
   end
   return { atom }
 end
@@ -2114,10 +2228,8 @@ function M.backlight_atoms(ctx)
       })
     end
   end
-  if atom.on_click == nil then
-    if type(options.tooltip) == "string" and options.tooltip ~= "" then
-      atom.tooltip = options.tooltip
-    end
+  if type(options.tooltip) == "string" and options.tooltip ~= "" then
+    atom.tooltip = options.tooltip
   end
   return { atom }
 end
@@ -2158,10 +2270,8 @@ function M.idle_atoms(ctx)
   if control ~= nil then
     atom.on_click = M.click_binding(M.IDLE_TOGGLE_COMMAND)
   end
-  if atom.on_click == nil then
-    if type(options.tooltip) == "string" and options.tooltip ~= "" then
-      atom.tooltip = options.tooltip
-    end
+  if type(options.tooltip) == "string" and options.tooltip ~= "" then
+    atom.tooltip = options.tooltip
   end
   return { atom }
 end
@@ -3156,24 +3266,30 @@ function M.module_options(get, name)
   return options
 end
 
--- Appends the resolvable module specs of one group list to `specs`. Unknown
--- names and non-name entries are skipped, so one bad entry never hides the
--- bar.
-local function append_specs(get, list, specs)
+-- Appends the resolvable module specs of one group list to `specs`, tagging
+-- each spec with the group key it renders under (the anchor is declared at
+-- scene build time). Unknown names and non-name entries are skipped, so one
+-- bad entry never hides the bar.
+local function append_specs(get, list, specs, group)
   local count = list_len(list)
   for index = 1, count do
     local name = M.entry_module(list[index])
     if name ~= nil and M.MODULES[name] ~= nil then
-      specs[#specs + 1] = { name = name, options = M.module_options(get, name) }
+      specs[#specs + 1] = {
+        name = name,
+        group = group,
+        options = M.module_options(get, name),
+      }
     end
   end
 end
 
 -- Resolves the ordered module plan from the module-group settings. Order is
--- left, then center, then right. If no group is set, or every entry is
+-- left, then center, then right; each spec keeps its group so the scene can
+-- declare one anchored row per group. If no group is set, or every entry is
 -- unknown, the plan falls back to the shipped default (`modules_left` =
--- workspaces, `modules_center` = clock, `modules_right` = empty), so a bad
--- or empty spec never hides the bar.
+-- workspaces, `modules_center` = clock, `modules_right` = system
+-- indicators), so a bad or empty spec never hides the bar.
 function M.read_plan(get, opts)
   local specs = {}
   local groups = {}
@@ -3187,12 +3303,12 @@ function M.read_plan(get, opts)
   end
   if any_set then
     for _, key in ipairs(M.MODULE_GROUPS) do
-      append_specs(get, groups[key], specs)
+      append_specs(get, groups[key], specs, key)
     end
   end
   if #specs == 0 then
     for _, key in ipairs(M.MODULE_GROUPS) do
-      append_specs(get, M.DEFAULT_MODULE_PLAN[key], specs)
+      append_specs(get, M.DEFAULT_MODULE_PLAN[key], specs, key)
     end
   end
   if opts ~= nil then
@@ -3287,11 +3403,12 @@ function M.clip(atoms, max_bytes)
   return out
 end
 
--- Scene node for one atom. A tooltip with no command binds the detail command
--- (tooltip→notify fallback), carrying the atom's region when it declares one
--- so middle/right also reach the detail instead of falling through to a
--- clipboard paste behind chrome. A scroll binding rides alongside (wheel
--- steps never replace the click target).
+-- Scene node for one atom. Interaction fields stay additive: a click and a
+-- scroll binding ride the same leaf as its module's hover region, so adding
+-- hover never moves or removes an existing hit target. A tooltip with no
+-- command still binds the detail command (the explicit notification
+-- fallback), carrying the atom's region when it declares one. Hover detail
+-- reaches the UI only through the overlay tooltip.
 function M.atom_node(atom)
   local node = { kind = "Text", text = atom.text }
   if atom.bold == true then
@@ -3315,20 +3432,46 @@ function M.atom_node(atom)
   if atom.on_scroll ~= nil then
     node.on_scroll = atom.on_scroll
   end
+  if atom.hover ~= nil then
+    node.on_hover = atom.hover
+  end
   return node
 end
 
--- Renders the ordered plan into atoms: each module's atoms in order, joined by
--- a single space between modules, then clipped to the line byte bound. The
--- chassis icon selection is injected into every module's option table (on a
--- copy, so a spec never accumulates state), which keeps the opt-in maps
--- global while per-module `format`/`tooltip` options stay module-local.
+-- One anchored group row for the scene root (Core #2411). Only non-empty
+-- groups are emitted: an empty group would contribute a zero-width row that
+-- paints nothing, and omitting it keeps the scene (and the host's node
+-- budget) minimal. A group whose modules are all hidden therefore behaves
+-- exactly like an unset group.
+function M.group_node(anchor, atoms)
+  local children = {}
+  for _, atom in ipairs(atoms) do
+    children[#children + 1] = M.atom_node(atom)
+  end
+  return { kind = "Row", anchor = anchor, children = children }
+end
+
+-- Renders the plan into one atom list per group: each module's atoms in
+-- order, joined by a single space inside its group. Every atom carries its
+-- module instance's hover binding, and the module's first usable detail text
+-- is recorded under that region id for the hover command's overlay update.
+-- `seen` counts a module name across the whole plan so a repeated name gets
+-- a unique, stable region id. The chassis icon selection is injected into
+-- every module's option table (on a copy, so a spec never accumulates state),
+-- which keeps the opt-in maps global while per-module `format`/`tooltip`
+-- options stay module-local.
 function M.render_plan(opts, rows, now)
-  local atoms = {}
-  local first = true
+  local groups = {}
+  for _, key in ipairs(M.MODULE_GROUPS) do
+    groups[key] = {}
+  end
+  local details = {}
+  local seen = {}
   for _, spec in ipairs(opts.specs) do
     local def = M.MODULES[spec.name]
     if def ~= nil then
+      seen[spec.name] = (seen[spec.name] or 0) + 1
+      local region = M.hover_region_id(spec.name, seen[spec.name])
       local options = {}
       if type(spec.options) == "table" then
         for key, value in pairs(spec.options) do
@@ -3342,34 +3485,77 @@ function M.render_plan(opts, rows, now)
         now = now,
         options = options,
       })
-      if type(rendered) == "table" and #rendered > 0 then
-        if not first then
-          atoms[#atoms + 1] = { text = M.MODULE_GAP, module_gap = true }
+      local group = groups[spec.group or M.MODULE_GROUPS[1]]
+      if type(rendered) == "table" and #rendered > 0 and group ~= nil then
+        local detail = M.atoms_detail(rendered)
+        if detail ~= nil and region ~= nil then
+          details[region] = detail
+        end
+        local hover = M.hover_binding(region)
+        if #group > 0 then
+          group[#group + 1] = { text = M.MODULE_GAP, module_gap = true }
         end
         for _, atom in ipairs(rendered) do
-          atoms[#atoms + 1] = atom
+          local copy = {}
+          for key, value in pairs(atom) do
+            copy[key] = value
+          end
+          copy.hover = hover
+          group[#group + 1] = copy
         end
-        first = false
       end
     end
   end
-  return M.clip(atoms, M.LINE_MAX_BYTES)
+  -- One shared line bound in declaration order: left, then center, then
+  -- right. Core clips each anchored group to the band width; this bound only
+  -- keeps one scene under `LINE_MAX_BYTES`.
+  local remaining = M.LINE_MAX_BYTES
+  for _, key in ipairs(M.MODULE_GROUPS) do
+    groups[key] = M.clip(groups[key], remaining)
+    for _, atom in ipairs(groups[key]) do
+      remaining = remaining - #atom.text
+    end
+    if remaining < 0 then
+      remaining = 0
+    end
+  end
+  return groups, details
+end
+
+-- Full bar for the given settings, rows, and clock reading: the scene root
+-- Row with one anchored child Row per module group, plus the region→detail
+-- map the hover command serves. `component` keeps the pure scene-only entry
+-- point used by callers that do not need the detail map.
+function M.render_bar(opts, rows, now)
+  if not M.visible(rows, opts) then
+    return { component = HIDDEN, details = {}, visible = false }
+  end
+  local groups, details = M.render_plan(opts, rows, now)
+  local painted = 0
+  for _, key in ipairs(M.MODULE_GROUPS) do
+    for _, atom in ipairs(groups[key]) do
+      painted = painted + #atom.text
+    end
+  end
+  if painted == 0 then
+    return { component = HIDDEN, details = {}, visible = false }
+  end
+  local children = {}
+  for _, key in ipairs(M.MODULE_GROUPS) do
+    if #groups[key] > 0 then
+      children[#children + 1] = M.group_node(M.GROUP_ANCHORS[key], groups[key])
+    end
+  end
+  return {
+    component = { kind = "Row", children = children },
+    details = details,
+    visible = true,
+  }
 end
 
 -- Full bar component for the given settings, rows, and clock reading.
 function M.component(opts, rows, now)
-  if not M.visible(rows, opts) then
-    return HIDDEN
-  end
-  local atoms = M.render_plan(opts, rows, now)
-  if #atoms == 0 then
-    return HIDDEN
-  end
-  local children = {}
-  for _, atom in ipairs(atoms) do
-    children[#children + 1] = M.atom_node(atom)
-  end
-  return { kind = "Row", children = children }
+  return M.render_bar(opts, rows, now).component
 end
 
 -- Focus target for a click: the workspace id when it names an existing,
@@ -3529,16 +3715,80 @@ local opts = M.read_settings(settings_get)
 report_diagnostics(opts)
 local timers = {}
 
-local function build_component()
-  return M.component(opts, bitty.workspace.list(), now_seconds())
+-- Hover state (Core #2411). `hover_details` maps the live module region ids
+-- to their bounded detail text; `active_region` is the region whose enter is
+-- in effect. The overlay block is mounted once per generation and updated by
+-- the hover command; the host presents it as a non-modal tooltip only while
+-- this plugin owns the hovered band region and no capture is active.
+local hover_details = {}
+local active_region = nil
+local overlay_text = ""
+local overlay_block = nil
+
+local function current_bar()
+  return M.render_bar(opts, bitty.workspace.list(), now_seconds())
+end
+
+-- Replaces the overlay tooltip text. An unchanged text is a no-op, and an
+-- absent overlay block (an older host or a denied `ui.overlay` grant) fails
+-- closed: the bar still paints, only the tooltip is missing.
+local function show_tooltip(text)
+  text = text or ""
+  if text == overlay_text then
+    return true
+  end
+  if overlay_block == nil then
+    return false
+  end
+  local ok, updated = pcall(bitty.ui.update, overlay_block, {
+    kind = "Text",
+    text = text,
+  })
+  if ok and updated == true then
+    overlay_text = text
+    return true
+  end
+  return false
+end
+
+-- Drops the active tooltip (leave, hide, or a region that no longer exists).
+local function clear_tooltip()
+  active_region = nil
+  return show_tooltip("")
 end
 
 -- Mounts are registration calls valid only during activation, so the band
 -- edge is fixed per generation; an `edge` change applies on the next one.
-local block = bitty.ui.mount(M.EDGE_SLOTS[opts.edge], build_component())
+local first_bar = current_bar()
+local block = bitty.ui.mount(M.EDGE_SLOTS[opts.edge], first_bar.component)
+hover_details = first_bar.details
+-- The overlay slot is the host's non-modal tooltip surface. It is
+-- presentation-only here: no `ui.overlay.focus`, no capture, no modal. A
+-- host that cannot host the slot (or denies `ui.overlay`) leaves the bar
+-- functional without a tooltip.
+do
+  local ok, handle = pcall(function()
+    return bitty.ui.mount(M.HOVER_SLOT, { kind = "Text", text = "" })
+  end)
+  if ok and type(handle) == "number" then
+    overlay_block = handle
+  end
+end
 
+-- Re-renders the band and refreshes the tooltip text of the region under the
+-- pointer, so a live module (cpu, memory, battery, ...) updates its detail
+-- while hovered without a second enter dispatch.
 local function render()
-  bitty.ui.update(block, build_component())
+  local bar = current_bar()
+  hover_details = bar.details
+  if not bar.visible or active_region == nil then
+    if active_region ~= nil then
+      clear_tooltip()
+    end
+  else
+    show_tooltip(hover_details[active_region])
+  end
+  bitty.ui.update(block, bar.component)
 end
 
 -- Arms one timer module (bar#17): the first tick at the module cadence plus
@@ -3662,7 +3912,7 @@ bitty.commands.register({
 bitty.commands.register({
   id = DETAIL_COMMAND_ID,
   title = "Unified Bar: show module detail",
-  description = "Show a module's detail text as a notification (tooltip fallback).",
+  description = "Show a module's detail text as a notification (explicit fallback; hover uses the overlay tooltip).",
   args_schema = {
     type = "object",
     properties = click_properties({
@@ -3683,6 +3933,47 @@ bitty.commands.register({
       return false
     end
     return result
+  end,
+})
+
+-- Hover dispatcher (Core #2411). The host resolves the live region under the
+-- pointer and calls this with the stable module region id plus `phase`; no
+-- coordinates ever reach the plugin. `enter` shows that module's bounded
+-- detail in the overlay block, `leave` clears it. A leave for a region that
+-- is no longer active is a no-op, so a stale transition can never clear a
+-- newer tooltip. Missing overlay support or detail fails closed (no
+-- tooltip), never a notification.
+bitty.commands.register({
+  id = HOVER_COMMAND_ID,
+  title = "Unified Bar: module hover detail",
+  description = "Update the non-modal overlay tooltip on pointer enter/leave (Core band hover).",
+  args_schema = {
+    type = "object",
+    properties = {
+      region = { type = "string", maxLength = M.REGION_ID_MAX_BYTES },
+      phase = { type = "string", enum = { "enter", "leave" } },
+    },
+    required = { "region", "phase" },
+    additionalProperties = false,
+  },
+  run = function(args)
+    local region = args.region
+    local phase = args.phase
+    if not M.valid_region_id(region) then
+      return false
+    end
+    if phase == "leave" then
+      if active_region == region then
+        active_region = nil
+        return show_tooltip("")
+      end
+      return true
+    end
+    if phase ~= "enter" then
+      return false
+    end
+    active_region = region
+    return show_tooltip(hover_details[region])
   end,
 })
 
