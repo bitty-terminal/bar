@@ -317,8 +317,14 @@ coordinates reach the plugin. On enter the bar writes the module's existing
 detail text (cpu/memory/battery readings, the clock date-time, the workspace
 strip, the audio port, the bonded-device list, or a module's `tooltip`
 option) into its `overlay`-slot block as one bounded plain-text row; on leave
-it clears it. Core anchors the block to the live module region and presents
-it as a non-modal tooltip.
+it clears it. Core anchors the block to the live module region, centers the
+row on that module, and presents it as a non-modal tooltip.
+
+While the tooltip is open it stays live: every module tick re-renders the bar
+and replaces the tooltip text, so the cpu/memory/network readings and the
+clock minute follow their module cadence. A timer tick re-arms the next tick
+before rendering, so one slow or faulted frame cannot stop the cadence and
+leave the tooltip frozen.
 
 Hover is presentation-only: it never captures input, never sets modal state,
 and never uses an OS notification. The tooltip disappears on leave, focus
@@ -372,23 +378,23 @@ form, so they are declared `string-array` with an empty default and read as
 module defaults until table settings land host- and SDK-side (CTX-1226). The
 option logic itself is unchanged and covered by the pure suites:
 
-| Module       | Option           | Type    | Default              | Notes                                                             |
-| ------------ | ---------------- | ------- | -------------------- | ----------------------------------------------------------------- |
-| `clock`      | `format`         | string  | `"%H:%M"`            | `os.date` format.                                                 |
-| `clock`      | `tick_ms`        | integer | `60000`              | Timer cadence, clamped to the `200` ms floor.                     |
-| `clock`      | `tooltip`        | string  | none                 | Hover / middle-click detail; default the live date-time.          |
-| `pulseaudio` | `format`         | string  | none                 | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override. |
-| `pulseaudio` | `show_port`      | boolean | `true`               | Append the truncated port to the text.                            |
-| `pulseaudio` | `port_max_chars` | integer | `16`                 | Port display width, `1..64`.                                      |
-| `pulseaudio` | `tick_ms`        | integer | `2000`               | State poll cadence, clamped to the `200` ms floor.                |
-| `pulseaudio` | `tooltip`        | string  | none                 | Hover tooltip; default the full port name (text may truncate it). |
-| `microphone` | `format`         | string  | `"{icon} {volume}%"` | Keys: `{icon}`, `{volume}`, `{muted}`.                            |
-| `microphone` | `tick_ms`        | integer | `2000`               | Source poll cadence (same snapshot as `pulseaudio`).              |
-| `microphone` | `tooltip`        | string  | none                 | Default: `Microphone 70% (muted)`.                                |
-| `spectrum`   | `buckets`        | integer | `8`                  | Sample width, `1..32` (out-of-range falls back to `8`).           |
-| `spectrum`   | `tick_ms`        | integer | `250`                | Meter cadence (4 fps), clamped to the `200` ms floor.             |
-| `spectrum`   | `paused`         | boolean | `false`              | Freeze the last row without polling.                              |
-| `spectrum`   | `tooltip`        | string  | none                 | Hover tooltip text; no tooltip when unset.                        |
+| Module       | Option           | Type    | Default              | Notes                                                                                                                       |
+| ------------ | ---------------- | ------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `clock`      | `format`         | string  | `"%H:%M"`            | `os.date` format.                                                                                                           |
+| `clock`      | `tick_ms`        | integer | `60000`              | Timer cadence, clamped to the `200` ms floor.                                                                               |
+| `clock`      | `tooltip`        | string  | none                 | Hover / middle-click detail; default the live date-time (`Friday, 23 October 2026 02:09`, English names, minute precision). |
+| `pulseaudio` | `format`         | string  | none                 | Bounded `{icon}`/`{volume}`/`{port}`/`{muted}` template override.                                                           |
+| `pulseaudio` | `show_port`      | boolean | `true`               | Append the truncated port to the text.                                                                                      |
+| `pulseaudio` | `port_max_chars` | integer | `16`                 | Port display width, `1..64`.                                                                                                |
+| `pulseaudio` | `tick_ms`        | integer | `2000`               | State poll cadence, clamped to the `200` ms floor.                                                                          |
+| `pulseaudio` | `tooltip`        | string  | none                 | Hover tooltip; default the full port name (text may truncate it).                                                           |
+| `microphone` | `format`         | string  | `"{icon} {volume}%"` | Keys: `{icon}`, `{volume}`, `{muted}`.                                                                                      |
+| `microphone` | `tick_ms`        | integer | `2000`               | Source poll cadence (same snapshot as `pulseaudio`).                                                                        |
+| `microphone` | `tooltip`        | string  | none                 | Default: `Microphone 70% (muted)`.                                                                                          |
+| `spectrum`   | `buckets`        | integer | `8`                  | Sample width, `1..32` (out-of-range falls back to `8`).                                                                     |
+| `spectrum`   | `tick_ms`        | integer | `250`                | Meter cadence (4 fps), clamped to the `200` ms floor.                                                                       |
+| `spectrum`   | `paused`         | boolean | `false`              | Freeze the last row without polling.                                                                                        |
+| `spectrum`   | `tooltip`        | string  | none                 | Hover tooltip text; no tooltip when unset.                                                                                  |
 
 ### Modules (Phase B devices)
 

@@ -326,6 +326,79 @@ describe("overlay tooltip lifecycle", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
+  test("clock tooltip formats names and refreshes on the module tick", async () => {
+    // bitty#2530: the hover detail must be formatted (never raw `%A`/`%B`)
+    // and must keep updating while the tooltip is open. The fake clock makes
+    // the cadence assertion deterministic; the default 60 s clock tick is the
+    // refresh that moves the minute.
+    const run = await bar({
+      workspaces: THREE,
+      settings: {
+        modules_left: ["clock"],
+        modules_center: [],
+        modules_right: [],
+      },
+      fakeNow: 1792717763,
+    });
+    const region = leaves(run.component())[0]!.on_hover!.region!.id;
+    run.host.dispatchCommand(HOVER_COMMAND, { region, phase: "enter" });
+    const first = run.overlayText();
+    expect(first).not.toContain("%");
+    expect(first).toMatch(
+      /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), \d\d (January|February|March|April|May|June|July|August|September|October|November|December) \d{4} \d\d:\d\d$/,
+    );
+
+    run.setNow(1792717763 + 60);
+    run.host.advanceTimers(60000);
+    const second = run.overlayText();
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/:\d\d$/);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("a transient band update fault does not freeze the tooltip", async () => {
+    // bitty#2530: Core can abort a timer callback (wall budget) or the host
+    // bridge can reject one `ui.update`. The timer chain re-arms before the
+    // render, so one faulted frame must not stop the cadence and leave the
+    // tooltip frozen; the host still records the fault.
+    let total = 42.4;
+    const run = await bar({
+      workspaces: THREE,
+      settings: {
+        modules_left: ["cpu"],
+        modules_center: [],
+        modules_right: [],
+      },
+      grants: SENSOR_GRANTS,
+      services: {
+        [CPU]: {
+          snapshot: () => ({
+            total_pct: total,
+            per_core: [50, 30],
+            stale_age_ms: 0,
+          }),
+        },
+      },
+      failBandUpdates: 1,
+    });
+    const region = leaves(run.component())[0]!.on_hover!.region!.id;
+    run.host.dispatchCommand(HOVER_COMMAND, { region, phase: "enter" });
+    expect(run.overlayText()).toBe("CPU 42% (2 cores)");
+
+    // First tick renders fresh text, then the injected band update fault is
+    // contained by the host (one diagnostic, never a silent stall).
+    total = 71.6;
+    run.host.advanceTimers(2000);
+    expect(run.overlayText()).toBe("CPU 72% (2 cores)");
+    expect(run.host.handlerViolations).toHaveLength(1);
+
+    // The next pre-armed tick still renders, so the tooltip keeps updating.
+    total = 88.2;
+    run.host.advanceTimers(2000);
+    expect(run.overlayText()).toBe("CPU 88% (2 cores)");
+    expect(run.host.handlerViolations).toHaveLength(1);
+  });
+
   test("hiding the bar clears the tooltip", async () => {
     const run = await bar({
       workspaces: THREE,

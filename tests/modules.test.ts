@@ -454,6 +454,63 @@ describe("pure chassis helpers", () => {
     expect(mod["clock_text"]("%H:%M", "no")).toBe("");
   });
 
+  test("clock_detail_text formats English names from calendar fields", () => {
+    // bitty#2530: the detail is built from `os.date("*t")` fields and
+    // plugin-local names, so it never emits raw `%A`/`%B` placeholders on a
+    // host whose restricted `os.date` lacks the name conversions.
+    const detail = mod["clock_detail_text"] as (
+      fields: Record<string, unknown>,
+    ) => string | undefined;
+    expect(
+      detail({
+        year: 2026,
+        month: 10,
+        day: 23,
+        hour: 2,
+        min: 9,
+        sec: 23,
+        wday: 6,
+      }),
+    ).toBe("Friday, 23 October 2026 02:09");
+    expect(
+      detail({
+        year: 2026,
+        month: 1,
+        day: 1,
+        hour: 0,
+        min: 0,
+        sec: 0,
+        wday: 5,
+      }),
+    ).toBe("Thursday, 01 January 2026 00:00");
+    // Fail closed on a missing or out-of-range field.
+    expect(detail({ year: 2026 }) ?? null).toBeNull();
+    expect(
+      detail({
+        year: 2026,
+        month: 13,
+        day: 1,
+        hour: 0,
+        min: 0,
+        sec: 0,
+        wday: 5,
+      }) ?? null,
+    ).toBeNull();
+    expect(
+      detail("no" as unknown as Record<string, unknown>) ?? null,
+    ).toBeNull();
+  });
+
+  test("clock_detail is fully formatted for a fixed instant", () => {
+    const detail = mod["clock_detail"] as (now: number) => string | undefined;
+    const text = detail(1792717763) ?? "";
+    expect(text).not.toBe("");
+    expect(text).not.toContain("%");
+    expect(text).toMatch(
+      /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), \d\d (January|February|March|April|May|June|July|August|September|October|November|December) \d{4} \d\d:\d\d$/,
+    );
+  });
+
   test("tick_ms is nil for event modules and floor-clamped for timer modules", () => {
     expect(mod["tick_ms"]({ tick_ms: 60000 }, {})).toBe(60000);
     expect(mod["tick_ms"]({ tick_ms: 60000 }, { tick_ms: 1 })).toBe(200);
