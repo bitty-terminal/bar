@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+    groups:
+      actions:
+        patterns:
+          - "*"
+  # Dependabot requires the Bun ecosystem for a repository managed by bun.lock;
+  # the npm ecosystem refuses to update a Bun lockfile.
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+    # The SDK is pinned to a reviewed commit on purpose; bump it in the task
+    # that moves the manifest contract, not through a bot PR.
+    ignore:
+      - dependency-name: "bitty-plugin-sdk"

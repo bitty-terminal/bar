@@ -10,9 +10,60 @@
 # package.json.
 luaparse_pin := "0.3.1"
 
+# Pinned metadata gates. `bunx --bun <tool>@<pin>` keeps each gate on exactly
+# the version its sibling plugins use, without adding a second dependency set
+# to package.json.
+prettier_version := "3.9.6"
+markdownlint_version := "0.23.1"
+
 # List available recipes.
 default:
     @just --list
+
+# Check formatting of all files with Prettier (.prettierignore scopes it to
+# tracked sources; `--ignore-unknown` skips Lua and lockfiles).
+fmt-check:
+    bunx --bun prettier@{{prettier_version}} --check . --ignore-unknown
+
+# Lint all Markdown sources with markdownlint-cli2 (.markdownlint-cli2.jsonc).
+markdownlint:
+    bunx --bun markdownlint-cli2@{{markdownlint_version}}
+
+# Fail when the repository metadata that every checkout needs is missing or
+# unparsable.
+metadata:
+    test -s README.md && test -s AGENTS.md && test -s repo.toml
+    test -s .carryctx/config.toml
+    python3 -c 'import tomllib; from pathlib import Path; [tomllib.loads(p.read_text()) for p in [Path("repo.toml"), Path(".carryctx/config.toml")]]'
+
+# Fail when build output, databases, or worktree scratch is staged or would be
+# picked up by `git add`.
+hygiene:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bad=0
+    while IFS= read -r -d '' f; do
+        case "$f" in
+            *.sqlite|*.db|*.zst|*.tar|*.tar.gz|*.tgz|node_modules/*|target/*|dist/*|.worktrees/*)
+                echo "unexpected artifact tracked: $f" >&2; bad=1 ;;
+        esac
+    done < <(git ls-files -z --cached --others --exclude-standard)
+    test "$bad" -eq 0
+
+# Fail on hardcoded host paths in any tracked or untracked source file.
+paths:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pattern='(/hom''e/|/Use''rs/|/mn''t/[A-Za-z]|[A-Za-z]:[\\/]Use''rs[\\/])'
+    found=0
+    while IFS= read -r -d '' f; do
+        if grep -nEI "$pattern" "$f"; then found=1; fi
+    done < <(git ls-files -z --cached --others --exclude-standard)
+    if [ "$found" -ne 0 ]; then
+        echo 'hardcoded host path detected (portable-path gate)' >&2
+        exit 1
+    fi
+    echo 'portable-path gate passed'
 
 # Install pinned dev dependencies from bun.lock. This is the only gate step
 # that may use the network; install once, then `just check` is offline.
@@ -49,4 +100,4 @@ test: deps
     bun test
 
 # Aggregate gate run locally and in CI (after `just install`).
-check: manifest lua lua-control test
+check: fmt-check markdownlint metadata hygiene paths manifest lua lua-control test

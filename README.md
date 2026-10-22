@@ -513,10 +513,10 @@ every row of one `bitty.workspace.list()` result carries the same
 `scratchpad_count` (`0`/`1`) and `scratchpad_occupied` snapshot (Core CTX-0954,
 bitty PR #1671). The bar reads that snapshot tolerantly (the highest valid
 count wins, any presence flag wins; absent or invalid fields read as empty)
-and appends ` [scratchpad]` after the capsule list while the slot is occupied.
-The count rides the state and is shown only when it exceeds the single-slot
-ceiling (` [scratchpad:N]`; never on current hosts, where presence alone
-carries the `0`/`1`). Without an occupied slot the capsule list has no
+and appends the `[scratchpad]` suffix after the capsule list while the slot is
+occupied. The count rides the state and is shown only when it exceeds the
+single-slot ceiling (`[scratchpad:N]`; never on current hosts, where presence
+alone carries the `0`/`1`). Without an occupied slot the capsule list has no
 scratchpad segment.
 
 - The indicator is presentation only: it is never clickable and queues no
