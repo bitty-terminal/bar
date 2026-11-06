@@ -3989,6 +3989,24 @@ local function reschedule()
   end
 end
 
+-- Visibility edge for the timer chain. `reschedule()` arms nothing while the
+-- bar is hidden (a single workspace with `show_single = false`), and the
+-- activation call is the only one that can arm it again: the workspace events
+-- subscribed below used to repaint only, so revealing the band created the
+-- capsules but never a tick, and a timer-driven module (the clock) stayed at
+-- its reveal value forever (bitty#2899). Track the edge so becoming visible
+-- arms the chain and becoming hidden drops it, exactly once per transition.
+local armed_visible = nil
+local function sync_arming()
+  local visible = M.visible(bitty.workspace.list(), opts)
+  if visible == armed_visible then
+    return
+  end
+  armed_visible = visible
+  reschedule()
+  render()
+end
+
 -- Shared optional properties for a region-aware click/scroll command: the
 -- host injects `button` (left/right/middle) on a click and `region` on both
 -- clicks and scrolls. A direct palette/keymap invocation omits both, so both
@@ -4418,7 +4436,10 @@ for _, spec in ipairs(opts.specs) do
     for _, name in ipairs(def.events) do
       if subscribed[name] == nil then
         subscribed[name] = true
-        bitty.events.subscribe(name, render)
+        bitty.events.subscribe(name, function()
+          render()
+          sync_arming()
+        end)
       end
     end
   end
@@ -4437,5 +4458,6 @@ bitty.events.subscribe("config.reloaded", function()
 end)
 
 reschedule()
+armed_visible = M.visible(bitty.workspace.list(), opts)
 
 return M
