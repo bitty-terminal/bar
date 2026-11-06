@@ -185,17 +185,20 @@ describe("rendering parity with the Core workspaceline", () => {
     expect(leaves(run.component())[0]?.fg).toBeUndefined();
   });
 
-  test("occupied and attention states are restrained capsule markers", async () => {
+  test("active and attention states are restrained capsule markers", async () => {
     const rows = [
       ws(1, "idle"),
       ws(4, "busy", true, 2),
       ws(9, "urgent", false, 0, { bell: true, activity: false, exited: false }),
     ];
     const run = await bar({ workspaces: rows });
+    // The label is the bare number: an occupied workspace no longer appends a
+    // marker, because the capsule surface already distinguishes it. Only the
+    // active workspace (``*``) and attention (``!``) ride the label.
     expect(leaves(run.component()).map((leaf) => leaf.text)).toEqual([
       " 1 ",
       " ",
-      " 4*+ ",
+      " 4* ",
       " ",
       " 9! ",
     ]);
