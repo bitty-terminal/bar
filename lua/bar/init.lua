@@ -95,7 +95,6 @@ M.LINE_MAX_BYTES = 1024 -- WORKSPACELINE_MAX_CHARS (UTF-8 bytes, char-boundary c
 M.MAX_WORKSPACES = 16 -- MAX_WORKSPACES (also the workspace.list row bound)
 
 M.ACTIVE_MARK = "*"
-M.OCCUPIED_MARK = "+"
 M.ATTENTION_MARK = "!"
 -- Capsule padding: one space on each side of the label, painted with the
 -- capsule background so the pill reads as a filled capsule instead of
@@ -1244,9 +1243,6 @@ function M.segments(rows, opts)
     local marks = ""
     if row.active == true then
       marks = marks .. M.ACTIVE_MARK
-    end
-    if type(row.panel_count) == "number" and row.panel_count > 0 then
-      marks = marks .. M.OCCUPIED_MARK
     end
     local attention = row.attention
     if attention ~= nil and
