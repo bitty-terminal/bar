@@ -149,7 +149,7 @@ return {
   keymaps = {
     {
       chord = "ctrl+alt+b",
-      action = "bitty-terminal.bar:focus",
+      action = "command:bitty-terminal.bar:focus",
       context = "global",
     },
   },
