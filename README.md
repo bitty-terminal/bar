@@ -16,6 +16,14 @@ when a provider is absent or ungranted.
 > The workspace bar and system modules are implemented; tabs and statusline
 > modules are not implemented yet.
 
+The bar has no open command: it mounts automatically on activation when
+`show = true` and repaints on workspace, focus, and provider events. The plugin
+installs no default keyboard chord; interaction is pointer-driven (left-click a
+capsule to focus it, wheel to cycle, middle or right for detail), and every
+target dispatches a registered command. For example, clicking a capsule
+dispatches `bitty-terminal.bar:focus` with that capsule's stable `id`, and the
+band repaints with the workspace focused.
+
 ## Install
 
 Prerequisites: Bitty `>=0.0.24` and Plugin API `^1.0` (from
@@ -148,8 +156,8 @@ mappings keep precedence:
 return {
   keymaps = {
     {
-      chord = "ctrl+alt+b",
-      action = "command:bitty-terminal.bar:focus",
+      chord = "ctrl+alt+m",
+      action = "command:bitty-terminal.bar:audio-toggle",
       context = "global",
     },
   },
@@ -157,7 +165,8 @@ return {
 ```
 
 `focus` requires an `id` argument, so a bare keymap entry cannot choose a
-workspace; bind other bar commands or use the click targets.
+workspace. Bind an argument-free control command such as `audio-toggle`,
+`bluetooth-toggle`, or `idle-toggle`, or use the click targets.
 
 ## Troubleshooting
 
