@@ -169,6 +169,14 @@ describe("bar#21 settings declarations match the entry point", () => {
       kind: "string",
       default: '"index"',
     });
+    expect(DECLARED.get("max_length")).toEqual({
+      kind: "int",
+      default: "0",
+    });
+    expect(DECLARED.get("rewrite")).toEqual({
+      kind: "string-array",
+      default: "[]",
+    });
 
     for (const group of MODULE.MODULE_GROUPS) {
       expect(DECLARED.get(group)?.kind).toBe("string-array");
@@ -182,6 +190,8 @@ describe("bar#21 settings declarations match the entry point", () => {
     expect(MODULE.DEFAULTS.show_single).toBe(false);
     expect(MODULE.DEFAULTS.name_max_chars).toBe(MODULE.NAME_MAX_CHARS);
     expect(MODULE.DEFAULTS.label).toBe("index");
+    expect(MODULE.DEFAULTS.max_length).toBe(0);
+    expect(MODULE.DEFAULTS.rewrite).toEqual({});
   });
 
   test(

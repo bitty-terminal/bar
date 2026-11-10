@@ -78,29 +78,31 @@ Settings are declared in `bitty-plugin.toml` `[settings]` and resolved from
 `$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua`. Every key is
 user-owned; the plugin never writes settings.
 
-| Key              | Type         | Default                                | Description                                                                                                                        | Applies         |
-| ---------------- | ------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                           | Live            |
-| `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                       | Next activation |
-| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                | Live            |
-| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                   | Live            |
-| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                    | Live            |
-| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, or `"nerd"`; an unknown value falls back to `"ascii"`.                   | Live            |
-| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group; anchored to the left inset edge.                                                          | Live            |
-| `modules_center` | string array | `["clock"]`                            | Ordered module names for the center group; centered on the full band row (never "after left").                                     | Live            |
-| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the right group; flush to the right inset edge.                                                           | Live            |
-| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults. | Live            |
-| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                        | Live            |
-| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                      | Live            |
-| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                    | Live            |
-| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                    | Live            |
-| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                         | Live            |
-| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                   | Live            |
-| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                   | Live            |
-| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                     | Live            |
-| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                          | Live            |
-| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                       | Live            |
-| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                      | Live            |
+| Key              | Type         | Default                                | Description                                                                                                                             | Applies         |
+| ---------------- | ------------ | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                                | Live            |
+| `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                            | Next activation |
+| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                     | Live            |
+| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                        | Live            |
+| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                         | Live            |
+| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, `"nerd"`, or a state-keyed icon table; invalid values fall back to `"ascii"`. | Live            |
+| `max_length`     | integer      | `0`                                    | Maximum display cells per module text (`0` = unbounded, `1..256`); over-length strings truncate with `…` (U+2026).                      | Live            |
+| `rewrite`        | string array | `[]`                                   | Ordered Lua pattern rewrite rules (`"pattern=>replacement"` or `{ pattern, replacement }`, `<= 16` rules, `<= 1` capture `%1`/`$1`).    | Live            |
+| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group; anchored to the left inset edge.                                                               | Live            |
+| `modules_center` | string array | `["clock"]`                            | Ordered module names for the center group; centered on the full band row (never "after left").                                          | Live            |
+| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the right group; flush to the right inset edge.                                                                | Live            |
+| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults.      | Live            |
+| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                             | Live            |
+| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                           | Live            |
+| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                         | Live            |
+| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                         | Live            |
+| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                              | Live            |
+| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                        | Live            |
+| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                        | Live            |
+| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                          | Live            |
+| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                               | Live            |
+| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                            | Live            |
+| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                           | Live            |
 
 ```lua
 -- $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
@@ -379,9 +381,63 @@ still bounded to 256 display cells.
 Text+icon composition is a stable `{icon}` template key (or the clock's icon
 prefix). The default templates are unchanged for ASCII, e.g. battery remains
 `{icon} {capacity}%`; a custom per-module `format` may place `{icon}` itself.
-Per-module option tables are inert under the v1 settings contract (see below),
-so the maps currently compose through the tested defaults; the template
-surface lights up unchanged when table settings land.
+Unknown `{placeholder}` keys in a custom `format` render literally and report a
+single bounded diagnostic.
+
+In addition to the `"ascii"`, `"pua"`, and `"nerd"` presets, `icons` (top-level
+or per-module) accepts a state-keyed Lua table mapping state names (`"1"`..`"10"`,
+`"urgent"`, `"active"`, `"default"` for workspaces; `"charging"`,
+`"discharging"`, `"full"` for battery; `"wifi"`, `"ethernet"`,
+`"disconnected"`, `"disabled"` for network; `"muted"`, `"low"`, `"medium"`,
+`"high"` for audio; `"on"`, `"off"`, `"connected"` for Bluetooth) to bounded
+UTF-8 strings or ladder arrays. Unrecognized state keys are ignored; an invalid
+icon value falls back to the default icon for that state and reports one
+bounded diagnostic.
+
+`rewrite` applies ordered Lua pattern substitutions (`"pattern=>replacement"`
+or `{ pattern = ..., replacement = ... }`) to module text fields before
+template formatting. Rules are bounded to at most 16 entries, 128-byte
+patterns, 256-byte replacements, and 1024-byte output, with at most one capture
+group (`%1` or `$1`). PCRE lookarounds (`(?...)`), PCRE backslash escapes
+(`\d`, `\w`, `\s`, `\b`), and backreferences beyond `%1`/`$1` are rejected; an
+invalid rule falls back to the raw value and reports one bounded diagnostic.
+
+`max_length` bounds rendered module text in display cells (`0` = unbounded,
+`1..256`). Values exceeding `max_length` are truncated on a UTF-8 code-point
+boundary with a trailing `…` (U+2026, 1 display cell) so wide CJK/emoji and
+Nerd Font glyphs never split mid-sequence.
+
+```lua
+-- Example customization in $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
+return {
+  label = "both",
+  max_length = 24,
+  icons = {
+    ["1"] = "󰲠",
+    ["2"] = "󰲢",
+    urgent = "󰀦",
+    default = "󰊠",
+    wifi = "󰤨",
+    disconnected = "󰤭",
+    charging = "󰂄",
+    discharging = "󰁹",
+    full = "󰁹",
+    muted = "󰝟",
+  },
+  rewrite = {
+    "^projects/([%w_-]+)=>proj:%1",
+    "analog%-output%-headphones=>HP",
+  },
+  network = {
+    format = "{icon} {essid} ({down}/{up})",
+    max_length = 20,
+  },
+}
+```
+
+Per-module option tables are inert under the strict v1 host settings schema
+(see below), so the maps and rules compose through top-level settings on a v1
+host and per-module option tables light up unchanged when table settings land.
 
 Per-module options live in a settings collection named after the module.
 Each collection is declared in the manifest `[settings]` table (bitty#2010);

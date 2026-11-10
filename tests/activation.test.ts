@@ -123,6 +123,8 @@ describe("activation manifest declarations", () => {
       name_max_chars: { kind: "int", def: 32 },
       label: { kind: "string", def: "index" },
       icons: { kind: "string", def: "ascii" },
+      max_length: { kind: "int", def: 0 },
+      rewrite: { kind: "string-array", def: [] },
       modules_left: { kind: "string-array", def: ["workspaces"] },
       modules_center: { kind: "string-array", def: ["clock"] },
       modules_right: {

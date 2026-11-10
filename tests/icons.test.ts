@@ -469,3 +469,173 @@ describe("icons through activation", () => {
     expect(delta).toBe(2); // one glyph cell plus the joining space
   });
 });
+
+describe("bar#24 state-keyed icons, rewrite rules, format placeholders, and max_length", () => {
+  test("state-keyed user icon map resolves workspace, battery, network, audio, and bluetooth states", () => {
+    const customIcons = {
+      "1": "󰲠",
+      "2": "󰲢",
+      urgent: "󰀦",
+      default: "󰊠",
+      wifi: "󰤨",
+      ethernet: "󰈀",
+      disconnected: "󰤭",
+      charging: "󰂄",
+      discharging: "󰁹",
+      full: "󰁹",
+      muted: "󰝟",
+      high: "󰕾",
+      on: "󰂯",
+      off: "󰂲",
+      connected: "󰂱",
+      unrecognized_state_key: "ignored",
+    };
+
+    expect(mod["valid_icon_map"](customIcons)).toBe(true);
+    expect(mod["icons_diagnostic"](customIcons)).toBeNil();
+
+    expect(mod["workspace_icon"]({ id: 1, name: "ws1" }, customIcons)).toBe(
+      "󰲠",
+    );
+    expect(mod["workspace_icon"]({ id: 4, name: "code" }, customIcons)).toBe(
+      "󰊠",
+    );
+    expect(
+      mod["workspace_icon"](
+        { id: 1, name: "ws1", attention: { bell: true } },
+        customIcons,
+      ),
+    ).toBe("󰀦");
+
+    expect(
+      mod["network_icon"]({ link: "wifi", signal_pct: 80 }, customIcons),
+    ).toBe("󰤨");
+    expect(mod["network_icon"]({ link: "disconnected" }, customIcons)).toBe(
+      "󰤭",
+    );
+    expect(mod["battery_glyph"](customIcons, 50, "charging")).toBe("󰂄");
+    expect(mod["battery_glyph"](customIcons, 50, "discharging")).toBe("󰁹");
+    expect(mod["battery_glyph"](customIcons, 100, "full")).toBe("󰁹");
+    expect(
+      mod["audio_icon"](
+        { volume_pct: 80, muted: true, port: "speaker" },
+        customIcons,
+      ),
+    ).toBe("󰝟");
+    expect(
+      mod["bluetooth_icon"]({ powered: true, connected_count: 2 }, customIcons),
+    ).toBe("󰂱");
+  });
+
+  test("invalid entry in a user icon map falls back to default and reports one bounded diagnostic", () => {
+    const mapWithBadEntry = {
+      wifi: "󰤨",
+      disconnected: "x".repeat(25),
+    };
+    expect(mod["valid_icon_map"](mapWithBadEntry)).toBe(false);
+    expect(mod["icons_diagnostic"](mapWithBadEntry)).toBe(
+      "Unified Bar: unknown icons table; using 'ascii'.",
+    );
+    // Valid entry in the same map still resolves; invalid entry falls back to ASCII.
+    expect(mod["icon_glyph"](mapWithBadEntry, "network_wifi", 1)).toBe("󰤨");
+    expect(mod["icon_glyph"](mapWithBadEntry, "network_disconnected")).toBe("");
+  });
+
+  test("unknown format placeholders render literally and produce one bounded diagnostic", () => {
+    expect(
+      mod["render_template"]("{icon} {volume}% {unknown_key}", {
+        icon: "HI",
+        volume: "80",
+      }),
+    ).toBe("HI 80% {unknown_key}");
+    expect(
+      mod["format_diagnostic"]("{icon} {volume}% {unknown_key}", {
+        icon: "",
+        volume: "",
+      }),
+    ).toBe(
+      "Unified Bar: unknown format placeholder '{unknown_key}'; rendering literally.",
+    );
+  });
+
+  test("Lua rewrite rules support %1 and $1 captures and apply in order before formatting", () => {
+    const rules = ["^projects/([%w_-]+)=>proj:%1", "proj:([%w_-]+)=>[$1]"];
+    expect(mod["rewrite_diagnostic"](rules)).toBeNil();
+    expect(mod["apply_rewrite"]("projects/bitty-bar", rules)).toBe(
+      "[bitty-bar]",
+    );
+
+    const netText = mod["network_text"](
+      { link: "wifi", down_bps: 8000, up_bps: 4000 },
+      "CorpNet-5GHz",
+      {
+        rewrite: ["(%w+)%-5GHz=>%1"],
+        format: "{link}:{essid}",
+      },
+    );
+    expect(netText).toBe("wifi:CorpNet");
+  });
+
+  test("rewrite rules reject PCRE lookarounds, PCRE escapes, >1 captures, and >16 rules with fallback", () => {
+    expect(mod["valid_rewrite_pattern"]("(?<=foo)bar")).toBe(false);
+    expect(mod["valid_rewrite_pattern"]("\\d+")).toBe(false);
+    expect(mod["valid_rewrite_pattern"]("(%w+)-(%w+)")).toBe(false);
+    expect(mod["valid_rewrite_pattern"]("(%w+)%1")).toBe(false);
+    expect(mod["valid_rewrite_pattern"]("x".repeat(129))).toBe(false);
+
+    // Invalid rule falls back to raw value and produces a bounded diagnostic.
+    const badRules = ["(?<=foo)bar=>baz", "valid=>ok"];
+    expect(mod["apply_rewrite"]("valid text", badRules)).toBe("ok text");
+    expect(mod["rewrite_diagnostic"](badRules)).toContain(
+      "Unified Bar: invalid rewrite ",
+    );
+
+    // Backreference %2 or $2 is rejected.
+    expect(mod["rewrite_diagnostic"](["(%w+)=>%2"])).toContain(
+      "Unified Bar: invalid rewrite ",
+    );
+    expect(mod["rewrite_diagnostic"](["(%w+)=>$2"])).toContain(
+      "Unified Bar: invalid rewrite ",
+    );
+
+    // Rule count > 16 is capped at 16 and reports a bounded diagnostic.
+    const manyRules = Array.from({ length: 18 }, (_, i) => `k${i}=>v${i}`);
+    expect(mod["rewrite_diagnostic"](manyRules)).toBe(
+      "Unified Bar: invalid rewrite count>16; using raw value.",
+    );
+  });
+
+  test("max_length truncates in display cells with trailing ellipsis on code-point boundaries", () => {
+    expect(mod["truncate_max_length"]("hello world", 0)).toBe("hello world");
+    expect(mod["truncate_max_length"]("hello", 5)).toBe("hello");
+    expect(mod["truncate_max_length"]("hello world", 6)).toBe("hello…");
+    expect(mod["truncate_max_length"]("hello world", 1)).toBe("…");
+    // Wide CJK characters (2 cells each): max_length = 4 fits 1 wide char (2 cells) + ellipsis (1 cell) = 3 cells.
+    expect(mod["truncate_max_length"]("日本語", 4)).toBe("日…");
+    expect(mod["display_cells"](mod["truncate_max_length"]("日本語", 4))).toBe(
+      3,
+    );
+
+    expect(mod["max_length_diagnostic"](-1)).toBe(
+      "Unified Bar: invalid max_length -1; using 0.",
+    );
+    expect(mod["max_length_diagnostic"](999)).toBe(
+      "Unified Bar: invalid max_length 999; using 0.",
+    );
+  });
+
+  test("activation applies top-level rewrite and max_length and reports bounded diagnostics", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "projects/alpha", true), ws(2, "projects/beta")],
+      settings: {
+        label: "name",
+        rewrite: ["^projects/(%w+)=>p:%1"],
+        max_length: 5,
+      },
+    });
+    // "projects/alpha" -> "p:alpha" (7 cells) -> truncated to 5 cells: "p:al…"
+    // "projects/beta"  -> "p:beta"  (6 cells) -> truncated to 5 cells: "p:be…"
+    expect(textOf(run.component())).toBe(" p:al…*   p:be… ");
+    expect(run.host.notifications).toEqual([]);
+  });
+});
