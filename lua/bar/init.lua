@@ -488,11 +488,32 @@ M.ICON_SETS = {
 M.MICROPHONE_DEFAULT_FORMAT = "{icon} {volume}%"
 M.MICROPHONE_TICK_MS = 2000
 
+-- bar#24 customization bounds: rewrite rules (Lua patterns, <=1 capture,
+-- bounded count/pattern/replacement/output bytes) and max-length truncation
+-- with a trailing ellipsis (U+2026).
+M.MAX_LENGTH_DEFAULT = 0
+M.MAX_LENGTH_MAX = M.MODULE_TEXT_MAX_CELLS
+M.ELLIPSIS = "\226\128\166"
+M.REWRITE_MAX_RULES = 16
+M.REWRITE_PATTERN_MAX_BYTES = 128
+M.REWRITE_REPLACEMENT_MAX_BYTES = 256
+M.REWRITE_OUTPUT_MAX_BYTES = M.TEMPLATE_MAX_BYTES
+M.MAX_LENGTH_DIAGNOSTIC_PREFIX = "Unified Bar: invalid max_length "
+M.MAX_LENGTH_DIAGNOSTIC_SUFFIX = "; using 0."
+M.REWRITE_DIAGNOSTIC_PREFIX = "Unified Bar: invalid rewrite "
+M.REWRITE_DIAGNOSTIC_SUFFIX = "; using raw value."
+M.FORMAT_DIAGNOSTIC_PREFIX = "Unified Bar: invalid format "
+M.FORMAT_DIAGNOSTIC_SUFFIX = "; using default."
+M.FORMAT_UNKNOWN_KEY_PREFIX = "Unified Bar: unknown format placeholder "
+M.FORMAT_UNKNOWN_KEY_SUFFIX = "; rendering literally."
+
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
 -- `workspace.bar.edge`; `show_single` opts into a lone-workspace bar, which
 -- Core always hid. `name_max_chars` keeps the Core pill-name bound and
--- `label` selects the capsule label mode; `icons` selects the icon map.
+-- `label` selects the capsule label mode; `icons` selects the icon map;
+-- `max_length` bounds module text in display cells (`0` = unbounded);
+-- `rewrite` holds ordered Lua pattern rewrite rules (`{}` = none).
 M.DEFAULTS = {
   show = true,
   edge = "bottom",
@@ -500,6 +521,8 @@ M.DEFAULTS = {
   name_max_chars = M.NAME_MAX_CHARS,
   label = M.LABEL_DEFAULT,
   icons = M.ICON_SET_DEFAULT,
+  max_length = M.MAX_LENGTH_DEFAULT,
+  rewrite = {},
 }
 
 -- A band whose text is empty is not painted by the host.
@@ -750,46 +773,164 @@ function M.truncate_cells(text, max_cells)
   return table.concat(out)
 end
 
+-- Short state aliases for user-supplied icon tables (`bar#24`): a per-module
+-- or top-level `icons` table may key by state name (`wifi`, `muted`,
+-- `charging`, `default`, `1..10`, `urgent`) as well as the canonical
+-- `ICON_SETS` key.
+M.ICON_STATE_ALIASES = {
+  network_wifi = "wifi",
+  network_ethernet = "ethernet",
+  network_disconnected = "disconnected",
+  network_disabled = "disabled",
+  bluetooth_on = "on",
+  bluetooth_off = "off",
+  bluetooth_connected = "connected",
+  audio_muted = "muted",
+  audio_low = "low",
+  audio_medium = "medium",
+  audio_high = "high",
+  audio_speaker = "speaker",
+  audio_headphones = "headphones",
+  audio_headset = "headset",
+  audio_hdmi = "hdmi",
+  audio_usb = "usb",
+  audio_bluetooth = "bluetooth",
+  microphone_on = "on",
+  microphone_muted = "muted",
+  battery = "discharging",
+  battery_charging = "charging",
+  battery_full = "full",
+}
+
 -- Icon set table for a setting value, or the shipped ASCII set for an
--- absent/unknown value (fail closed: never a blank or partial map).
+-- absent/unknown value (fail closed: never a blank or partial map). A user
+-- table is returned as-is so `M.icon_glyph` can resolve state keys against it.
 function M.icon_set(name)
   if type(name) == "string" then
     local set = M.ICON_SETS[name]
     if set ~= nil then
       return set
     end
+  elseif is_collection(name) then
+    return name
   end
   return M.ICON_SETS[M.ICON_SET_DEFAULT]
 end
 
--- One icon glyph from the selected set, or its ASCII fallback. An entry is
--- usable only when it is a string within `M.ICON_MAX_BYTES` bytes and
--- well-formed UTF-8; otherwise the ASCII entry (which may legitimately be
--- empty) wins and the module composes no icon. `index` selects a ladder rung.
-function M.icon_glyph(name, key, index)
-  local set = M.icon_set(name)
-  local entry = set[key]
-  if index ~= nil then
-    if type(entry) ~= "table" then
-      entry = nil
-    else
-      entry = entry[index]
+local function extract_icon_entry(raw, index)
+  if index ~= nil and is_collection(raw) then
+    local ok, sub = pcall(function()
+      return raw[index]
+    end)
+    if ok then
+      return sub
     end
+    return nil
   end
-  if not M.valid_icon(entry) then
-    entry = M.icon_set(M.ICON_SET_DEFAULT)[key]
-    if index ~= nil then
-      if type(entry) ~= "table" then
-        entry = nil
-      else
-        entry = entry[index]
+  return raw
+end
+
+-- One icon glyph from the selected set or user state map, or its ASCII
+-- fallback. An entry is usable only when it is a string within
+-- `M.ICON_MAX_BYTES` bytes and well-formed UTF-8; otherwise the ASCII entry
+-- (which may legitimately be empty) wins and the module composes no icon.
+-- `index` selects a ladder rung when the entry is a table; a single string in
+-- a user state map applies to all rungs of that state.
+function M.icon_glyph(name, key, index)
+  if is_collection(name) then
+    local alias = M.ICON_STATE_ALIASES[key]
+    local raw = nil
+    local ok_key, by_key = pcall(function()
+      return name[key]
+    end)
+    if ok_key and by_key ~= nil then
+      raw = by_key
+    elseif alias ~= nil then
+      local ok_alias, by_alias = pcall(function()
+        return name[alias]
+      end)
+      if ok_alias and by_alias ~= nil then
+        raw = by_alias
       end
     end
+    if raw == nil then
+      local ok_def, by_def = pcall(function()
+        return name.default
+      end)
+      if ok_def and by_def ~= nil then
+        raw = by_def
+      end
+    end
+    if raw == nil then
+      return ""
+    end
+    local candidate = extract_icon_entry(raw, index)
+    if M.valid_icon(candidate) then
+      return candidate
+    end
+    local fallback = extract_icon_entry(M.ICON_SETS[M.ICON_SET_DEFAULT][key], index)
+    if type(fallback) == "string" then
+      return fallback
+    end
+    return ""
+  end
+  local set = M.icon_set(name)
+  local entry = extract_icon_entry(set[key], index)
+  if not M.valid_icon(entry) then
+    entry = extract_icon_entry(M.ICON_SETS[M.ICON_SET_DEFAULT][key], index)
   end
   if type(entry) ~= "string" then
     return ""
   end
   return entry
+end
+
+-- Workspace state icon from a user-defined `icons` map (`1..10`, `urgent`,
+-- `active`, `default`), or `""` when no map entry applies. Shipped string
+-- presets (`ascii`/`pua`/`nerd`) have no workspace icons so default capsules
+-- remain byte-for-byte unchanged.
+function M.workspace_icon(row, icons)
+  if not is_collection(icons) or type(row) ~= "table" and type(row) ~= "userdata" then
+    return ""
+  end
+  local function lookup(k)
+    local ok, val = pcall(function()
+      return icons[k]
+    end)
+    if ok and M.valid_icon(val) and val ~= "" then
+      return val
+    end
+    return nil
+  end
+  local attention = row.attention
+  if attention ~= nil and
+      (attention.bell == true or attention.activity == true or attention.exited == true) then
+    local urg = lookup("urgent")
+    if urg ~= nil then
+      return urg
+    end
+  end
+  if row.active == true then
+    local act = lookup("active")
+    if act ~= nil then
+      return act
+    end
+  end
+  if row.id ~= nil then
+    local by_str = lookup(tostring(row.id))
+    if by_str ~= nil then
+      return by_str
+    end
+    local by_num = lookup(row.id)
+    if by_num ~= nil then
+      return by_num
+    end
+  end
+  local def = lookup("default")
+  if def ~= nil then
+    return def
+  end
+  return ""
 end
 
 -- Whether one map entry is safe to paint: a bounded, well-formed UTF-8
@@ -832,11 +973,42 @@ end
 -- Battery ladder rung (1..5) for a capacity/state pair and icon set. ASCII
 -- keeps the historical `+` charging mark (baked into its ladder); the PUA
 -- and Nerd Font sets carry native charging ladders. `full` is a distinct
--- glyph in every set.
+-- glyph in every set. A user state map may key by `state` (`charging`,
+-- `discharging`, `full`, `plugged`, `unknown`), `warning`/`critical`, or
+-- `default`.
 function M.battery_glyph(name, capacity, state)
   local bucket = M.battery_bucket(capacity)
   if bucket == nil then
     return ""
+  end
+  if is_collection(name) then
+    if type(state) == "string" and state ~= "" then
+      local ok, direct = pcall(function()
+        return name[state]
+      end)
+      if ok and direct ~= nil then
+        local picked = extract_icon_entry(direct, bucket)
+        if M.valid_icon(picked) and picked ~= "" then
+          return picked
+        end
+      end
+    end
+    if state == "full" then
+      local full = M.icon_glyph(name, "battery_full")
+      if full ~= "" then
+        return full
+      end
+    elseif state == "charging" then
+      local chg = M.icon_glyph(name, "battery_charging", bucket)
+      if chg ~= "" then
+        return chg
+      end
+    end
+    local dis = M.icon_glyph(name, "battery", bucket)
+    if dis ~= "" then
+      return dis
+    end
+    return M.battery_glyph(M.ICON_SET_DEFAULT, capacity, state)
   end
   local set = name
   if type(set) ~= "string" or M.ICON_SETS[set] == nil then
@@ -857,11 +1029,351 @@ function M.battery_glyph(name, capacity, state)
   return M.icon_glyph(set, "battery", bucket)
 end
 
+-- Truncates `text` to at most `max_length` display cells with a trailing
+-- ellipsis (`…`, 1 display cell) when `max_length` is a positive integer in
+-- `1..M.MAX_LENGTH_MAX` and `text` exceeds it (`bar#24`). `0` or nil leaves
+-- `text` unchanged.
+function M.valid_max_length(max_length)
+  return is_integer(max_length)
+    and max_length >= 0
+    and max_length <= M.MAX_LENGTH_MAX
+end
+
+function M.max_length_diagnostic(value)
+  if value == nil or M.valid_max_length(value) then
+    return nil
+  end
+  local shown
+  if type(value) == "string" then
+    local text = M.truncate_chars(value, M.LABEL_DIAGNOSTIC_MAX_CHARS)
+    text = string.gsub(text, "%c", "?")
+    shown = "'" .. text .. "'"
+  elseif type(value) == "number" then
+    shown = tostring(value)
+  else
+    shown = type(value)
+  end
+  return M.MAX_LENGTH_DIAGNOSTIC_PREFIX .. shown .. M.MAX_LENGTH_DIAGNOSTIC_SUFFIX
+end
+
+function M.truncate_max_length(text, max_length)
+  if type(text) ~= "string" then
+    return ""
+  end
+  if not M.valid_max_length(max_length) or max_length == 0 then
+    return text
+  end
+  if M.display_cells(text) <= max_length then
+    return text
+  end
+  if max_length == 1 then
+    return M.ELLIPSIS
+  end
+  return M.truncate_cells(text, max_length - 1) .. M.ELLIPSIS
+end
+
+-- Validates a Lua rewrite pattern (`bar#24`): non-empty UTF-8 within
+-- `M.REWRITE_PATTERN_MAX_BYTES`, Lua pattern grammar only (no PCRE
+-- lookarounds `(?...)`, no PCRE backslash escapes `\d`/`\w`/`\s`/`\b`, no
+-- pattern backreferences `%1`..`%9`, and at most one capture group `(...)`).
+-- Returns `(true, capture_count)` or `(false, reason)`.
+function M.valid_rewrite_pattern(pattern)
+  if type(pattern) ~= "string" or pattern == "" then
+    return false, "empty pattern"
+  end
+  if #pattern > M.REWRITE_PATTERN_MAX_BYTES then
+    return false, "pattern exceeds byte bound"
+  end
+  if not M.utf8_valid(pattern) then
+    return false, "invalid utf-8 pattern"
+  end
+  local i = 1
+  local n = #pattern
+  local open_captures = 0
+  local total_captures = 0
+  local in_class = false
+  while i <= n do
+    local b = string.byte(pattern, i)
+    if b == 37 then -- '%'
+      if i == n then
+        return false, "dangling '%'"
+      end
+      local next_b = string.byte(pattern, i + 1)
+      if not in_class and next_b >= 48 and next_b <= 57 then -- '0'..'9'
+        return false, "backreference in pattern"
+      end
+      if not in_class and (next_b == 98 or next_b == 102) then -- '%b' / '%f'
+        return false, "unsupported '%b'/'%f' pattern"
+      end
+      i = i + 2
+    elseif b == 92 then -- '\'
+      if i < n then
+        local next_b = string.byte(pattern, i + 1)
+        if next_b == 100 or next_b == 68 -- d, D
+          or next_b == 119 or next_b == 87 -- w, W
+          or next_b == 115 or next_b == 83 -- s, S
+          or next_b == 98 or next_b == 66 -- b, B
+          or (next_b >= 48 and next_b <= 57) then
+          return false, "PCRE backslash escape"
+        end
+      end
+      i = i + 1
+    elseif in_class then
+      if b == 93 then -- ']'
+        in_class = false
+      end
+      i = i + 1
+    elseif b == 91 then -- '['
+      in_class = true
+      if i < n and string.byte(pattern, i + 1) == 94 then -- '^'
+        i = i + 1
+      end
+      if i < n and string.byte(pattern, i + 1) == 93 then -- leading ']'
+        i = i + 1
+      end
+      i = i + 1
+    elseif b == 40 then -- '('
+      if i < n and string.byte(pattern, i + 1) == 63 then -- '(?'
+        return false, "PCRE group syntax"
+      end
+      open_captures = open_captures + 1
+      total_captures = total_captures + 1
+      if total_captures > 1 then
+        return false, "more than one capture group"
+      end
+      i = i + 1
+    elseif b == 41 then -- ')'
+      if open_captures < 1 then
+        return false, "unbalanced ')'"
+      end
+      open_captures = open_captures - 1
+      i = i + 1
+    else
+      i = i + 1
+    end
+  end
+  if in_class or open_captures ~= 0 then
+    return false, "unclosed group or class"
+  end
+  local ok = pcall(string.find, "", pattern)
+  if not ok then
+    return false, "malformed Lua pattern"
+  end
+  return true, total_captures
+end
+
+-- Validates and normalizes a rewrite replacement string (`bar#24`): UTF-8
+-- within `M.REWRITE_REPLACEMENT_MAX_BYTES`, supporting `%1` and `$1` (for a
+-- pattern with 1 capture group) and rejecting `%0`/`$0` or `%2`..`%9` /
+-- `$2`..`$9`. Returns `(normalized_replacement, nil)` or `(nil, reason)`.
+function M.normalize_rewrite_replacement(replacement, capture_count)
+  if type(replacement) ~= "string" then
+    return nil, "replacement not a string"
+  end
+  if #replacement > M.REWRITE_REPLACEMENT_MAX_BYTES then
+    return nil, "replacement exceeds byte bound"
+  end
+  if not M.utf8_valid(replacement) then
+    return nil, "invalid utf-8 replacement"
+  end
+  local out = {}
+  local i = 1
+  local n = #replacement
+  local captures = capture_count or 0
+  while i <= n do
+    local b = string.byte(replacement, i)
+    if b == 37 then -- '%'
+      if i == n then
+        return nil, "dangling '%' in replacement"
+      end
+      local next_b = string.byte(replacement, i + 1)
+      if next_b == 37 then -- '%%'
+        out[#out + 1] = "%%"
+        i = i + 2
+      elseif next_b == 49 then -- '%1'
+        if captures < 1 then
+          return nil, "backreference %1 without capture"
+        end
+        out[#out + 1] = "%1"
+        i = i + 2
+      else
+        return nil, "unsupported '%' escape in replacement"
+      end
+    elseif b == 36 then -- '$'
+      if i < n then
+        local next_b = string.byte(replacement, i + 1)
+        if next_b == 36 then -- '$$' -> literal '$'
+          out[#out + 1] = "$"
+          i = i + 2
+        elseif next_b == 49 then -- '$1' -> '%1'
+          if captures < 1 then
+            return nil, "backreference $1 without capture"
+          end
+          out[#out + 1] = "%1"
+          i = i + 2
+        elseif next_b >= 48 and next_b <= 57 then
+          return nil, "backreference beyond $1"
+        else
+          out[#out + 1] = "$"
+          i = i + 1
+        end
+      else
+        out[#out + 1] = "$"
+        i = i + 1
+      end
+    else
+      out[#out + 1] = string.sub(replacement, i, i)
+      i = i + 1
+    end
+  end
+  return table.concat(out), nil
+end
+
+local function parse_rewrite_entry(entry)
+  if type(entry) == "string" then
+    local s, e = string.find(entry, "=>", 1, true)
+    if s == nil then
+      s, e = string.find(entry, " -> ", 1, true)
+    end
+    if s == nil or s <= 1 then
+      return nil, nil
+    end
+    return string.sub(entry, 1, s - 1), string.sub(entry, e + 1)
+  end
+  if is_collection(entry) then
+    local pat = nil
+    local rep = nil
+    pcall(function()
+      pat = entry.pattern or entry[1]
+      rep = entry.replacement
+      if rep == nil then
+        rep = entry[2]
+      end
+    end)
+    return pat, rep
+  end
+  return nil, nil
+end
+
+-- Extracts an ordered list of `{ pattern, replacement }` candidates from a
+-- `rewrite` collection (array of `{ pattern, replacement }` / `{ pat, rep }` /
+-- `"pat=>rep"`, or a `{ [pat] = rep }` map sorted by key).
+local function collect_rewrite_rules(rules)
+  local list = {}
+  local n = list_len(rules)
+  if n > 0 then
+    for idx = 1, n do
+      local ok, item = pcall(function()
+        return rules[idx]
+      end)
+      if ok then
+        local pat, rep = parse_rewrite_entry(item)
+        list[#list + 1] = { pattern = pat, replacement = rep }
+      end
+    end
+    return list
+  end
+  if type(rules) == "table" then
+    local keys = {}
+    for k, _ in pairs(rules) do
+      if type(k) == "string" then
+        keys[#keys + 1] = k
+      else
+        list[#list + 1] = { pattern = k, replacement = rules[k] }
+      end
+    end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      list[#list + 1] = { pattern = k, replacement = rules[k] }
+    end
+  end
+  return list
+end
+
+-- Applies bounded Lua rewrite rules to `text` before formatting (`bar#24`).
+-- Invalid rule collections or patterns fall back to the raw value for that
+-- rule and report a bounded diagnostic through `M.rewrite_diagnostic`.
+local function eval_rewrite(text, rules)
+  if type(text) ~= "string" then
+    return "", nil
+  end
+  if rules == nil then
+    return text, nil
+  end
+  if not is_collection(rules) then
+    return text, M.REWRITE_DIAGNOSTIC_PREFIX .. type(rules) .. M.REWRITE_DIAGNOSTIC_SUFFIX
+  end
+  local entries = collect_rewrite_rules(rules)
+  if #entries == 0 then
+    return text, nil
+  end
+  local diagnostic = nil
+  local limit = #entries
+  if limit > M.REWRITE_MAX_RULES then
+    limit = M.REWRITE_MAX_RULES
+    diagnostic = M.REWRITE_DIAGNOSTIC_PREFIX .. "count>" .. M.REWRITE_MAX_RULES .. M.REWRITE_DIAGNOSTIC_SUFFIX
+  end
+  local current = M.truncate_bytes(text, M.REWRITE_OUTPUT_MAX_BYTES)
+  for idx = 1, limit do
+    local entry = entries[idx]
+    local ok_pat, captures = M.valid_rewrite_pattern(entry.pattern)
+    if not ok_pat then
+      if diagnostic == nil then
+        diagnostic = M.REWRITE_DIAGNOSTIC_PREFIX .. tostring(captures) .. M.REWRITE_DIAGNOSTIC_SUFFIX
+      end
+    else
+      local norm_rep, rep_err = M.normalize_rewrite_replacement(entry.replacement, captures)
+      if norm_rep == nil then
+        if diagnostic == nil then
+          diagnostic = M.REWRITE_DIAGNOSTIC_PREFIX .. tostring(rep_err) .. M.REWRITE_DIAGNOSTIC_SUFFIX
+        end
+      else
+        local ok_gsub, replaced = pcall(string.gsub, current, entry.pattern, norm_rep)
+        if not ok_gsub or type(replaced) ~= "string" then
+          if diagnostic == nil then
+            diagnostic = M.REWRITE_DIAGNOSTIC_PREFIX .. "gsub failed" .. M.REWRITE_DIAGNOSTIC_SUFFIX
+          end
+        else
+          current = M.truncate_bytes(replaced, M.REWRITE_OUTPUT_MAX_BYTES)
+        end
+      end
+    end
+  end
+  return current, diagnostic
+end
+
+function M.apply_rewrite(text, rules)
+  local current = eval_rewrite(text, rules)
+  return current
+end
+
+function M.rewrite_diagnostic(rules)
+  local _, diag = eval_rewrite("", rules)
+  return diag
+end
+
+-- Applies `rewrite` rules to every non-`icon` string field in a template data
+-- table before `M.render_template` runs.
+function M.rewrite_data(data, rules)
+  if not is_collection(data) or rules == nil then
+    return data
+  end
+  local out = {}
+  if type(data) == "table" then
+    for k, v in pairs(data) do
+      if k ~= "icon" and type(v) == "string" then
+        out[k] = M.apply_rewrite(v, rules)
+      else
+        out[k] = v
+      end
+    end
+  end
+  return out
+end
 
 -- Bounded in-plugin template renderer: `{key}` is replaced by `data[key]`
 -- (a missing key keeps its literal `{key}`), then the result is cut to
--- `max_bytes` on a character boundary. Pure; the module never builds a format
--- engine beyond this substitution.
+-- `max_bytes` on a character boundary.
 --
 -- Portable substitution (bar#15): the phodopus production VM rejects
 -- `string.gsub` with a function replacement, so matches are walked with
@@ -882,7 +1394,7 @@ function M.render_template(format, data, max_bytes)
   local pos = 1
   local n = #bounded
   while pos <= n do
-    local s, e, key = string.find(bounded, "{(%w+)}", pos)
+    local s, e, key = string.find(bounded, "{([%w_]+)}", pos)
     if s == nil then
       out[#out + 1] = string.sub(bounded, pos)
       break
@@ -899,6 +1411,62 @@ function M.render_template(format, data, max_bytes)
     pos = e + 1
   end
   return M.truncate_bytes(table.concat(out), cap)
+end
+
+-- First `{key}` placeholder in `format` that is absent from `allowed_keys`, or
+-- nil when every placeholder is recognized.
+function M.first_unknown_placeholder(format, allowed_keys)
+  if type(format) ~= "string" or not is_collection(allowed_keys) then
+    return nil
+  end
+  local bounded = M.truncate_bytes(format, M.TEMPLATE_MAX_BYTES)
+  local pos = 1
+  local n = #bounded
+  while pos <= n do
+    local s, e, key = string.find(bounded, "{([%w_]+)}", pos)
+    if s == nil then
+      break
+    end
+    local ok, present = pcall(function()
+      return allowed_keys[key]
+    end)
+    if not ok or present == nil then
+      return key
+    end
+    pos = e + 1
+  end
+  return nil
+end
+
+function M.unknown_placeholder_diagnostic(key)
+  if type(key) ~= "string" or key == "" then
+    return nil
+  end
+  local text = M.truncate_chars(key, M.LABEL_DIAGNOSTIC_MAX_CHARS)
+  text = string.gsub(text, "%c", "?")
+  return M.FORMAT_UNKNOWN_KEY_PREFIX .. "'{" .. text .. "}'" .. M.FORMAT_UNKNOWN_KEY_SUFFIX
+end
+
+function M.format_diagnostic(format, allowed_keys)
+  if format == nil then
+    return nil
+  end
+  if type(format) ~= "string" or format == "" or #format > M.TEMPLATE_MAX_BYTES or not M.utf8_valid(format) then
+    local shown = type(format)
+    if type(format) == "string" then
+      local text = M.truncate_chars(format, M.LABEL_DIAGNOSTIC_MAX_CHARS)
+      text = string.gsub(text, "%c", "?")
+      shown = "'" .. text .. "'"
+    end
+    return M.FORMAT_DIAGNOSTIC_PREFIX .. shown .. M.FORMAT_DIAGNOSTIC_SUFFIX
+  end
+  if is_collection(allowed_keys) then
+    local unknown = M.first_unknown_placeholder(format, allowed_keys)
+    if unknown ~= nil then
+      return M.unknown_placeholder_diagnostic(unknown)
+    end
+  end
+  return nil
 end
 
 -- Theme token for a module `states` name, or nil for an unknown/absent state.
@@ -1070,6 +1638,78 @@ function M.label_diagnostic(value)
   return M.LABEL_DIAGNOSTIC_PREFIX .. shown .. M.LABEL_DIAGNOSTIC_SUFFIX
 end
 
+M.ICON_MAP_MAX_KEYS = 64
+M.ICON_LADDER_MAX_ENTRIES = 8
+M.KNOWN_ICON_MAP_KEYS = {
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  "default", "urgent", "active",
+  "clock", "cpu", "memory", "backlight", "idle_on", "idle_off",
+  "network_wifi", "network_ethernet", "network_disconnected", "network_disabled",
+  "wifi", "ethernet", "disconnected", "disabled",
+  "bluetooth_on", "bluetooth_off", "bluetooth_connected",
+  "on", "off", "connected",
+  "audio_muted", "audio_low", "audio_medium", "audio_high",
+  "audio_speaker", "audio_headphones", "audio_headset", "audio_hdmi", "audio_usb", "audio_bluetooth",
+  "muted", "low", "medium", "high", "speaker", "headphones", "headset", "hdmi", "usb", "bluetooth",
+  "microphone_on", "microphone_muted",
+  "battery", "battery_charging", "battery_full",
+  "discharging", "charging", "full", "plugged", "unknown", "warning", "critical",
+}
+
+local function valid_icon_map_entry(v)
+  if is_collection(v) then
+    local n = list_len(v)
+    if n < 1 or n > M.ICON_LADDER_MAX_ENTRIES then
+      return false
+    end
+    for idx = 1, n do
+      local ok, sub = pcall(function()
+        return v[idx]
+      end)
+      if not ok or not M.valid_icon(sub) then
+        return false
+      end
+    end
+    return true
+  end
+  return M.valid_icon(v)
+end
+
+-- Whether `value` is a valid user-supplied `icons` map (`bar#24`): a table or
+-- bridge collection of at most `M.ICON_MAP_MAX_KEYS` entries whose keys are
+-- bounded strings or workspace integers `1..10` and whose values are valid
+-- icon strings or short ladder arrays of valid icon strings.
+function M.valid_icon_map(value)
+  if not is_collection(value) then
+    return false
+  end
+  if type(value) == "table" then
+    local count = 0
+    for k, v in pairs(value) do
+      count = count + 1
+      if count > M.ICON_MAP_MAX_KEYS then
+        return false
+      end
+      local valid_key = (type(k) == "string" and k ~= "" and #k <= 64 and M.utf8_valid(k))
+        or (is_integer(k) and k >= 1 and k <= M.MAX_WORKSPACES)
+      if not valid_key or not valid_icon_map_entry(v) then
+        return false
+      end
+    end
+    return true
+  end
+  for _, k in ipairs(M.KNOWN_ICON_MAP_KEYS) do
+    local ok, v = pcall(function()
+      return value[k]
+    end)
+    if ok and v ~= nil and not valid_icon_map_entry(v) then
+      return false
+    end
+  end
+  return true
+end
+
 -- Bounded diagnostic body for a rejected `icons` value, or nil when the value
 -- is absent or accepted. Mirrors `label_diagnostic`: the echoed value is cut
 -- to `LABEL_DIAGNOSTIC_MAX_CHARS` characters and control bytes are replaced,
@@ -1082,11 +1722,16 @@ function M.icons_diagnostic(value)
   if type(value) == "string" and M.ICON_SETS[value] ~= nil then
     return nil
   end
+  if M.valid_icon_map(value) then
+    return nil
+  end
   local shown
   if type(value) == "string" then
     local text = M.truncate_chars(value, M.LABEL_DIAGNOSTIC_MAX_CHARS)
     text = string.gsub(text, "%c", "?")
     shown = "'" .. text .. "'"
+  elseif is_collection(value) then
+    shown = "table"
   else
     shown = type(value)
   end
@@ -1097,15 +1742,47 @@ end
 -- `index` is the stable seq only; `name` the truncated name; `both` keeps the
 -- historical `id:name` pair. An empty name falls back to the seq so a pill is
 -- never blank (a blank label would paint invisible, unclickable chrome).
-function M.pill_label(row, opts)
-  local name = M.truncate_chars(row.name, opts.name_max_chars)
+-- Supports per-module or top-level `rewrite`, `icons` state maps, `format`,
+-- and `max_length` (`bar#24`).
+function M.pill_label(row, opts, options)
+  opts = opts or M.DEFAULTS
+  local rewrite = options and options.rewrite or opts.rewrite
+  local icons = options and options.icons or opts.icons
+  local max_length = options and options.max_length
+  if max_length == nil then
+    max_length = opts.max_length
+  end
+  local format = options and options.format
+  local raw_name = type(row.name) == "string" and row.name or ""
+  if rewrite ~= nil then
+    raw_name = M.apply_rewrite(raw_name, rewrite)
+  end
+  local name = M.truncate_chars(raw_name, opts.name_max_chars or M.NAME_MAX_CHARS)
+  local icon = M.workspace_icon(row, icons)
+  if type(format) == "string" and format ~= "" then
+    local data = {
+      id = tostring(row.id),
+      index = tostring(row.id),
+      name = name,
+      icon = icon,
+    }
+    local formatted = M.compact(M.render_template(format, data, M.TEMPLATE_MAX_BYTES))
+    if formatted ~= "" then
+      return M.truncate_max_length(formatted, max_length)
+    end
+  end
+  local base
   if opts.label == "name" and name ~= "" then
-    return name
+    base = name
+  elseif opts.label == "both" and name ~= "" then
+    base = tostring(row.id) .. ":" .. name
+  else
+    base = tostring(row.id)
   end
-  if opts.label == "both" and name ~= "" then
-    return tostring(row.id) .. ":" .. name
+  if icon ~= "" then
+    base = M.compose_icon(icon, base)
   end
-  return tostring(row.id)
+  return M.truncate_max_length(base, max_length)
 end
 
 -- Reads and validates the plugin settings; any absent or invalid value falls
@@ -1137,10 +1814,20 @@ function M.read_settings(get)
   end
   opts.label_diagnostic = M.label_diagnostic(label)
   local icons = get("icons")
-  if type(icons) == "string" and M.ICON_SETS[icons] ~= nil then
+  if (type(icons) == "string" and M.ICON_SETS[icons] ~= nil) or is_collection(icons) then
     opts.icons = icons
   end
   opts.icons_diagnostic = M.icons_diagnostic(icons)
+  local max_length = get("max_length")
+  if M.valid_max_length(max_length) then
+    opts.max_length = max_length
+  end
+  opts.max_length_diagnostic = M.max_length_diagnostic(max_length)
+  local rewrite = get("rewrite")
+  if is_collection(rewrite) then
+    opts.rewrite = rewrite
+  end
+  opts.rewrite_diagnostic = M.rewrite_diagnostic(rewrite)
   opts.specs = M.read_plan(get, opts)
   return opts
 end
@@ -1216,7 +1903,7 @@ end
 -- `workspaceline_tokens` renders `slot.seq`), so closing a workspace never
 -- renumbers the survivors. The scratchpad indicator remains available after
 -- the capsule list when the slot is occupied.
-function M.segments(rows, opts)
+function M.segments(rows, opts, options)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
   end
@@ -1249,7 +1936,7 @@ function M.segments(rows, opts)
         (attention.bell == true or attention.activity == true or attention.exited == true) then
       marks = marks .. M.ATTENTION_MARK
     end
-    local label = M.pill_label(row, opts)
+    local label = M.pill_label(row, opts, options)
     if marks ~= "" then
       label = label .. marks
     end
@@ -1309,9 +1996,9 @@ end
 -- detail (the same text middle/right click shows) rides the first atom as the
 -- module's hover tooltip; every capsule still carries its own item region for
 -- clicks.
-function M.workspaces_atoms(rows, opts)
+function M.workspaces_atoms(rows, opts, options)
   local atoms = {}
-  for _, segment in ipairs(M.segments(rows, opts)) do
+  for _, segment in ipairs(M.segments(rows, opts, options)) do
     atoms[#atoms + 1] = segment_atom(segment)
   end
   local detail = M.workspace_detail(rows, nil)
@@ -1454,7 +2141,18 @@ function M.clock_atoms(ctx)
   if type(format) ~= "string" or format == "" then
     format = M.clock_cycle_entry().format
   end
-  local text = M.compose_icon(M.clock_icon(options.icons), M.clock_text(format, ctx.now))
+  local icon = M.clock_icon(options.icons)
+  local raw_time = M.clock_text(format, ctx.now)
+  if options.rewrite ~= nil then
+    raw_time = M.apply_rewrite(raw_time, options.rewrite)
+  end
+  local text
+  if string.find(raw_time, "{icon}", 1, true) ~= nil then
+    text = M.compact(M.render_template(raw_time, { icon = icon }, M.TEMPLATE_MAX_BYTES))
+  else
+    text = M.compose_icon(icon, raw_time)
+  end
+  text = M.truncate_max_length(text, options.max_length)
   local atom = { text = text }
   atom.on_click = M.click_binding(M.CLOCK_ACTION_COMMAND, {}, "clock")
   local detail = options.tooltip
@@ -1644,15 +2342,22 @@ function M.audio_text(snap, options)
     and options.port_max_chars <= M.AUDIO_PORT_MAX_BYTES then
     port_chars = options.port_max_chars
   end
-  local port_short = M.truncate_chars(snap.port, port_chars)
-  local data = {
+  local raw_port = snap.port
+  if options.rewrite ~= nil then
+    raw_port = M.apply_rewrite(raw_port, options.rewrite)
+  end
+  local port_short = M.truncate_chars(raw_port, port_chars)
+  local data = M.rewrite_data({
     icon = M.audio_icon(snap, options.icons),
     volume = tostring(snap.volume_pct),
     port = port_short,
     muted = tostring(snap.muted),
-  }
+  }, options.rewrite)
   if type(options.format) == "string" and options.format ~= "" then
-    return M.render_template(options.format, data, M.TEMPLATE_MAX_BYTES)
+    return M.truncate_max_length(
+      M.render_template(options.format, data, M.TEMPLATE_MAX_BYTES),
+      options.max_length
+    )
   end
   local show_port = options.show_port
   if show_port == nil then
@@ -1660,9 +2365,9 @@ function M.audio_text(snap, options)
   end
   local text = data.icon .. " " .. data.volume .. "%"
   if show_port == true then
-    text = text .. ":" .. port_short
+    text = text .. ":" .. data.port
   end
-  return text
+  return M.truncate_max_length(text, options.max_length)
 end
 
 -- Audio tooltip: the full port name (untruncated display goes to the text).
@@ -2049,24 +2754,30 @@ function M.network_text(data, essid, options)
     clean_essid = M.truncate_bytes(essid, M.ESSID_MAX_BYTES)
   end
   local icon = M.network_icon(data, options.icons)
+  local fields = M.rewrite_data({
+    icon = icon,
+    link = data.link,
+    down = down or "",
+    up = up or "",
+    essid = clean_essid or "",
+  }, options.rewrite)
   local format = options.format
   if type(format) == "string" and format ~= "" then
-    return M.compact(M.render_template(format, {
-      icon = icon,
-      link = data.link,
-      down = down or "",
-      up = up or "",
-      essid = clean_essid or "",
-    }))
+    return M.truncate_max_length(
+      M.compact(M.render_template(format, fields)),
+      options.max_length
+    )
   end
-  local text = data.link
+  local text = fields.link
   if down ~= nil or up ~= nil then
-    text = text .. " " .. (down or "?") .. "/" .. (up or "?")
+    local d_val = down ~= nil and fields.down or "?"
+    local u_val = up ~= nil and fields.up or "?"
+    text = text .. " " .. d_val .. "/" .. u_val
   end
   if clean_essid ~= nil then
-    text = text .. " (" .. clean_essid .. ")"
+    text = text .. " (" .. fields.essid .. ")"
   end
-  return M.compose_icon(icon, text)
+  return M.truncate_max_length(M.compose_icon(icon, text), options.max_length)
 end
 
 -- Network module render: one readout atom, or no atoms when the provider is
@@ -2187,21 +2898,25 @@ function M.bluetooth_text(data, options)
     status = "on"
   end
   local icon = M.bluetooth_icon(data, options.icons)
+  local fields = M.rewrite_data({
+    icon = icon,
+    status = status,
+    connected = tostring(connected),
+    total = tostring(total),
+    powered = tostring(data.powered),
+  }, options.rewrite)
   local format = options.format
   if type(format) == "string" and format ~= "" then
-    return M.compact(M.render_template(format, {
-      icon = icon,
-      status = status,
-      connected = tostring(connected),
-      total = tostring(total),
-      powered = tostring(data.powered),
-    }))
+    return M.truncate_max_length(
+      M.compact(M.render_template(format, fields)),
+      options.max_length
+    )
   end
-  local text = "bt " .. status
+  local text = "bt " .. fields.status
   if data.powered and total > 0 then
-    text = text .. " (" .. connected .. "/" .. total .. ")"
+    text = text .. " (" .. fields.connected .. "/" .. fields.total .. ")"
   end
-  return M.compose_icon(icon, text)
+  return M.truncate_max_length(M.compose_icon(icon, text), options.max_length)
 end
 
 -- Bluetooth detail text (`alias (address)` per bonded device, bounded), or
@@ -2281,11 +2996,22 @@ function M.backlight_text(data, options)
   if pct < 0 or pct > 100 then
     return nil
   end
+  options = options or {}
+  local fields = M.rewrite_data({
+    icon = M.icon_glyph(options.icons, "backlight"),
+    pct = tostring(pct),
+  }, options.rewrite)
   local format = options.format
   if type(format) == "string" and format ~= "" then
-    return M.compact(M.render_template(format, { pct = tostring(pct) }))
+    return M.truncate_max_length(
+      M.compact(M.render_template(format, fields)),
+      options.max_length
+    )
   end
-  return pct .. "%"
+  return M.truncate_max_length(
+    M.compose_icon(fields.icon, fields.pct .. "%"),
+    options.max_length
+  )
 end
 
 -- Backlight module render: the brightness readout, clickable for one step
@@ -2320,7 +3046,7 @@ end
 
 -- Idle-inhibit display text, or nil when the snapshot hides (`inhibited`
 -- must be a boolean). The activated/deactivated glyphs stay config-side via
--- `on_text`/`off_text`.
+-- `on_text`/`off_text`, or via `format`/`icons`/`rewrite`/`max_length`.
 function M.idle_text(data, options)
   if type(data) ~= "table" and type(data) ~= "userdata" then
     return nil
@@ -2328,16 +3054,38 @@ function M.idle_text(data, options)
   if type(data.inhibited) ~= "boolean" then
     return nil
   end
+  options = options or {}
+  local state_key = data.inhibited and "on" or "off"
+  local icon = M.icon_glyph(options.icons, "idle_" .. state_key)
+  if type(options.format) == "string" and options.format ~= "" then
+    local fields = M.rewrite_data({
+      icon = icon,
+      state = state_key,
+      inhibited = tostring(data.inhibited),
+    }, options.rewrite)
+    return M.truncate_max_length(
+      M.compact(M.render_template(options.format, fields)),
+      options.max_length
+    )
+  end
+  local text
   if data.inhibited then
     if type(options.on_text) == "string" and options.on_text ~= "" then
-      return options.on_text
+      text = options.on_text
+    else
+      text = "inhibit:on"
     end
-    return "inhibit:on"
+  else
+    if type(options.off_text) == "string" and options.off_text ~= "" then
+      text = options.off_text
+    else
+      text = "inhibit:off"
+    end
   end
-  if type(options.off_text) == "string" and options.off_text ~= "" then
-    return options.off_text
+  if options.rewrite ~= nil then
+    text = M.apply_rewrite(text, options.rewrite)
   end
-  return "inhibit:off"
+  return M.truncate_max_length(M.compose_icon(icon, text), options.max_length)
 end
 
 -- Idle-inhibit module render: the inhibit state, clickable for the toggle
@@ -2607,24 +3355,26 @@ function M.cpu_atoms(ctx)
     true
   )
   local state = M.hot_state(total, marks.warning, marks.critical)
-  local shown = M.round_pct(total)
+  local shown = tostring(M.round_pct(total))
   local icon = M.icon_glyph(options.icons, "cpu")
   local custom = type(options.format) == "string" and options.format ~= ""
   local format = M.CPU_DEFAULT_FORMAT
   if custom then
     format = options.format
   end
-  local text = M.render_template(
-    format,
-    { icon = icon, total = shown, total_pct = shown },
-    M.TEMPLATE_MAX_BYTES
-  )
+  local fields = M.rewrite_data({
+    icon = icon,
+    total = shown,
+    total_pct = shown,
+  }, options.rewrite)
+  local text = M.render_template(format, fields, M.TEMPLATE_MAX_BYTES)
   if text == "" then
     return {}
   end
   if not custom then
     text = M.compose_icon(icon, text)
   end
+  text = M.truncate_max_length(text, options.max_length)
   local atom = { text = text, region = "cpu" }
   if state == "warning" or state == "critical" then
     atom.fg = M.state_token(state)
@@ -2663,14 +3413,14 @@ function M.memory_atoms(ctx)
     true
   )
   local state = M.hot_state(pct, marks.warning, marks.critical)
-  local shown = M.round_pct(pct)
+  local shown = tostring(M.round_pct(pct))
   local icon = M.icon_glyph(options.icons, "memory")
   local custom = type(options.format) == "string" and options.format ~= ""
   local format = M.MEMORY_DEFAULT_FORMAT
   if custom then
     format = options.format
   end
-  local text = M.render_template(format, {
+  local fields = M.rewrite_data({
     icon = icon,
     pct = shown,
     used = M.num1(used),
@@ -2678,13 +3428,15 @@ function M.memory_atoms(ctx)
     swap_pct = M.num1(snap_number(snapshot, "swap_pct")),
     swap_used = M.num1(snap_number(snapshot, "swap_used_gib")),
     swap_total = M.num1(snap_number(snapshot, "swap_total_gib")),
-  }, M.TEMPLATE_MAX_BYTES)
+  }, options.rewrite)
+  local text = M.render_template(format, fields, M.TEMPLATE_MAX_BYTES)
   if text == "" then
     return {}
   end
   if not custom then
     text = M.compose_icon(icon, text)
   end
+  text = M.truncate_max_length(text, options.max_length)
   local atom = { text = text, region = "memory" }
   if state == "warning" or state == "critical" then
     atom.fg = M.state_token(state)
@@ -2740,20 +3492,22 @@ function M.battery_atoms(ctx)
   if icon == "" then
     return {}
   end
-  local shown = M.round_pct(capacity)
+  local shown = tostring(M.round_pct(capacity))
   local format = options.format
   if type(format) ~= "string" or format == "" then
     format = M.BATTERY_DEFAULT_FORMAT
   end
-  local text = M.render_template(format, {
+  local fields = M.rewrite_data({
     icon = icon,
     capacity = shown,
     capacity_pct = shown,
     state = state,
-  }, M.TEMPLATE_MAX_BYTES)
+  }, options.rewrite)
+  local text = M.render_template(format, fields, M.TEMPLATE_MAX_BYTES)
   if text == "" then
     return {}
   end
+  text = M.truncate_max_length(text, options.max_length)
   local atom = { text = text, region = "battery" }
   if state == "discharging" then
     local marks = M.thresholds(
@@ -2922,16 +3676,19 @@ function M.microphone_text(snap, options)
   if not ok or not is_integer(volume) or type(muted) ~= "boolean" then
     return ""
   end
-  local data = {
+  local data = M.rewrite_data({
     icon = M.microphone_icon(snap, options.icons),
     volume = tostring(volume),
     muted = tostring(muted),
-  }
+  }, options.rewrite)
   local format = options.format
   if type(format) ~= "string" or format == "" then
     format = M.MICROPHONE_DEFAULT_FORMAT
   end
-  return M.compact(M.render_template(format, data, M.TEMPLATE_MAX_BYTES))
+  return M.truncate_max_length(
+    M.compact(M.render_template(format, data, M.TEMPLATE_MAX_BYTES)),
+    options.max_length
+  )
 end
 
 -- Microphone detail text, or nil when the source fields are absent.
@@ -3172,9 +3929,10 @@ M.MODULES.workspaces = {
     "workspace.focused",
     "workspace.changed",
   },
-  option_keys = {},
+  option_keys = { "format", "icons", "rewrite", "max_length", "fg", "bg" },
+  format_keys = { id = "", index = "", name = "", icon = "" },
   render = function(ctx)
-    return M.workspaces_atoms(ctx.rows, ctx.opts)
+    return M.workspaces_atoms(ctx.rows, ctx.opts, ctx.options)
   end,
 }
 
@@ -3182,7 +3940,8 @@ M.MODULES.clock = {
   name = "clock",
   kind = "timer",
   tick_ms = M.CLOCK_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", time = "" },
   render = function(ctx)
     return M.clock_atoms(ctx)
   end,
@@ -3197,7 +3956,8 @@ M.MODULES.network = {
   kind = "timer",
   tick_ms = M.NETWORK_TICK_MS,
   tick_floor_ms = M.NETWORK_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", link = "", down = "", up = "", essid = "" },
   render = function(ctx)
     return M.network_atoms(ctx)
   end,
@@ -3208,7 +3968,8 @@ M.MODULES.bluetooth = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "toggle", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "toggle", "fg", "bg" },
+  format_keys = { icon = "", status = "", connected = "", total = "", powered = "" },
   render = function(ctx)
     return M.bluetooth_atoms(ctx)
   end,
@@ -3219,7 +3980,8 @@ M.MODULES.backlight = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "step", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "step", "fg", "bg" },
+  format_keys = { icon = "", pct = "" },
   render = function(ctx)
     return M.backlight_atoms(ctx)
   end,
@@ -3230,7 +3992,8 @@ M.MODULES.idle = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "tick_ms", "tooltip", "on_text", "off_text", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "on_text", "off_text", "fg", "bg" },
+  format_keys = { icon = "", state = "", inhibited = "" },
   render = function(ctx)
     return M.idle_atoms(ctx)
   end,
@@ -3245,7 +4008,8 @@ M.MODULES.pulseaudio = {
   name = "pulseaudio",
   kind = "timer",
   tick_ms = M.AUDIO_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "show_port", "port_max_chars", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "show_port", "port_max_chars", "fg", "bg" },
+  format_keys = { icon = "", volume = "", port = "", muted = "" },
   render = function(ctx)
     return M.pulseaudio_atoms(ctx)
   end,
@@ -3262,7 +4026,8 @@ M.MODULES.microphone = {
   kind = "timer",
   tick_ms = M.MICROPHONE_TICK_MS,
   tick_floor_ms = M.MICROPHONE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", volume = "", muted = "" },
   render = function(ctx)
     return M.microphone_atoms(ctx)
   end,
@@ -3277,7 +4042,7 @@ M.MODULES.spectrum = {
   name = "spectrum",
   kind = "timer",
   tick_ms = M.SPECTRUM_TICK_MS,
-  option_keys = { "buckets", "tick_ms", "tooltip", "paused", "fg", "bg" },
+  option_keys = { "buckets", "max_length", "tick_ms", "tooltip", "paused", "fg", "bg" },
   render = function(ctx)
     return M.spectrum_atoms(ctx)
   end,
@@ -3287,7 +4052,8 @@ M.MODULES.cpu = {
   name = "cpu",
   kind = "timer",
   tick_ms = M.CPU_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", total = "", total_pct = "" },
   render = function(ctx)
     return M.cpu_atoms(ctx)
   end,
@@ -3297,7 +4063,8 @@ M.MODULES.memory = {
   name = "memory",
   kind = "timer",
   tick_ms = M.MEMORY_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", pct = "", used = "", total = "", swap_pct = "", swap_used = "", swap_total = "" },
   render = function(ctx)
     return M.memory_atoms(ctx)
   end,
@@ -3307,7 +4074,8 @@ M.MODULES.battery = {
   name = "battery",
   kind = "timer",
   tick_ms = M.BATTERY_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  option_keys = { "format", "icons", "rewrite", "max_length", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
+  format_keys = { icon = "", capacity = "", capacity_pct = "", state = "" },
   render = function(ctx)
     return M.battery_atoms(ctx)
   end,
@@ -3335,15 +4103,42 @@ end
 -- Per-module options for `name`: the recognized option keys of its registry
 -- entry, read from the settings collection named after the module. An absent
 -- or non-collection read yields no options (fail to default).
-function M.module_options(get, name)
+function M.module_options(get, name, opts)
   local options = {}
   local raw = get(name)
   local def = M.MODULES[name]
+  local function record_diag(diag)
+    if diag ~= nil and opts ~= nil and opts.option_diagnostic == nil then
+      opts.option_diagnostic = diag
+    end
+  end
   if is_collection(raw) and def ~= nil and type(def.option_keys) == "table" then
     for _, key in ipairs(def.option_keys) do
       local value = raw[key]
       if value ~= nil then
-        options[key] = value
+        if key == "format" then
+          record_diag(M.format_diagnostic(value, def.format_keys))
+          if type(value) == "string" and value ~= "" and #value <= M.TEMPLATE_MAX_BYTES and M.utf8_valid(value) then
+            options.format = value
+          end
+        elseif key == "icons" then
+          record_diag(M.icons_diagnostic(value))
+          if (type(value) == "string" and M.ICON_SETS[value] ~= nil) or is_collection(value) then
+            options.icons = value
+          end
+        elseif key == "max_length" then
+          record_diag(M.max_length_diagnostic(value))
+          if M.valid_max_length(value) then
+            options.max_length = value
+          end
+        elseif key == "rewrite" then
+          record_diag(M.rewrite_diagnostic(value))
+          if is_collection(value) then
+            options.rewrite = value
+          end
+        else
+          options[key] = value
+        end
       end
     end
   end
@@ -3354,7 +4149,7 @@ end
 -- each spec with the group key it renders under (the anchor is declared at
 -- scene build time). Unknown names and non-name entries are skipped, so one
 -- bad entry never hides the bar.
-local function append_specs(get, list, specs, group)
+local function append_specs(get, list, specs, group, opts)
   local count = list_len(list)
   for index = 1, count do
     local name = M.entry_module(list[index])
@@ -3362,7 +4157,7 @@ local function append_specs(get, list, specs, group)
       specs[#specs + 1] = {
         name = name,
         group = group,
-        options = M.module_options(get, name),
+        options = M.module_options(get, name, opts),
       }
     end
   end
@@ -3387,12 +4182,12 @@ function M.read_plan(get, opts)
   end
   if any_set then
     for _, key in ipairs(M.MODULE_GROUPS) do
-      append_specs(get, groups[key], specs, key)
+      append_specs(get, groups[key], specs, key, opts)
     end
   end
   if #specs == 0 then
     for _, key in ipairs(M.MODULE_GROUPS) do
-      append_specs(get, M.DEFAULT_MODULE_PLAN[key], specs, key)
+      append_specs(get, M.DEFAULT_MODULE_PLAN[key], specs, key, opts)
     end
   end
   if opts ~= nil then
@@ -3562,7 +4357,19 @@ function M.render_plan(opts, rows, now)
           options[key] = value
         end
       end
-      options.icons = opts.icons
+      if options.icons == nil then
+        options.icons = opts.icons
+      end
+      if options.max_length == nil then
+        options.max_length = opts.max_length
+      end
+      if options.rewrite == nil then
+        if is_collection(opts.rewrite) and list_len(opts.rewrite) > 0 then
+          options.rewrite = opts.rewrite
+        elseif type(opts.rewrite) == "table" and next(opts.rewrite) ~= nil then
+          options.rewrite = opts.rewrite
+        end
+      end
       local rendered = def.render({
         rows = rows,
         opts = opts,
@@ -3583,6 +4390,9 @@ function M.render_plan(opts, rows, now)
           local copy = {}
           for key, value in pairs(atom) do
             copy[key] = value
+          end
+          if not copy.whole and not copy.separator and not copy.module_gap then
+            copy.text = M.truncate_max_length(copy.text, options.max_length)
           end
           if copy.fg == nil and type(options.fg) == "string" and options.fg ~= "" then
             copy.fg = options.fg
@@ -3780,7 +4590,13 @@ end
 -- a reload storm cannot spam the notify surface or grow the dedup state. An
 -- ungranted or absent notify surface never breaks activation; the fallback
 -- setting still paints (never a silent empty bar).
-local reported_diagnostics = { label = nil, icons = nil }
+local reported_diagnostics = {
+  label = nil,
+  icons = nil,
+  max_length = nil,
+  rewrite = nil,
+  option = nil,
+}
 local function report_setting_diagnostic(key, body)
   if body == nil then
     reported_diagnostics[key] = nil
@@ -3799,6 +4615,9 @@ end
 local function report_diagnostics(settings)
   report_setting_diagnostic("label", settings.label_diagnostic)
   report_setting_diagnostic("icons", settings.icons_diagnostic)
+  report_setting_diagnostic("max_length", settings.max_length_diagnostic)
+  report_setting_diagnostic("rewrite", settings.rewrite_diagnostic)
+  report_setting_diagnostic("option", settings.option_diagnostic)
 end
 
 local opts = M.read_settings(settings_get)
