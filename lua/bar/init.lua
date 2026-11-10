@@ -3182,7 +3182,7 @@ M.MODULES.clock = {
   name = "clock",
   kind = "timer",
   tick_ms = M.CLOCK_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip" },
+  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.clock_atoms(ctx)
   end,
@@ -3197,7 +3197,7 @@ M.MODULES.network = {
   kind = "timer",
   tick_ms = M.NETWORK_TICK_MS,
   tick_floor_ms = M.NETWORK_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip" },
+  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.network_atoms(ctx)
   end,
@@ -3208,7 +3208,7 @@ M.MODULES.bluetooth = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "toggle" },
+  option_keys = { "format", "tick_ms", "tooltip", "toggle", "fg", "bg" },
   render = function(ctx)
     return M.bluetooth_atoms(ctx)
   end,
@@ -3219,7 +3219,7 @@ M.MODULES.backlight = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "step" },
+  option_keys = { "format", "tick_ms", "tooltip", "step", "fg", "bg" },
   render = function(ctx)
     return M.backlight_atoms(ctx)
   end,
@@ -3230,7 +3230,7 @@ M.MODULES.idle = {
   kind = "timer",
   tick_ms = M.DEVICE_TICK_MS,
   tick_floor_ms = M.DEVICE_TICK_MS,
-  option_keys = { "tick_ms", "tooltip", "on_text", "off_text" },
+  option_keys = { "tick_ms", "tooltip", "on_text", "off_text", "fg", "bg" },
   render = function(ctx)
     return M.idle_atoms(ctx)
   end,
@@ -3245,7 +3245,7 @@ M.MODULES.pulseaudio = {
   name = "pulseaudio",
   kind = "timer",
   tick_ms = M.AUDIO_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip", "show_port", "port_max_chars" },
+  option_keys = { "format", "tick_ms", "tooltip", "show_port", "port_max_chars", "fg", "bg" },
   render = function(ctx)
     return M.pulseaudio_atoms(ctx)
   end,
@@ -3262,7 +3262,7 @@ M.MODULES.microphone = {
   kind = "timer",
   tick_ms = M.MICROPHONE_TICK_MS,
   tick_floor_ms = M.MICROPHONE_TICK_MS,
-  option_keys = { "format", "tick_ms", "tooltip" },
+  option_keys = { "format", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.microphone_atoms(ctx)
   end,
@@ -3277,7 +3277,7 @@ M.MODULES.spectrum = {
   name = "spectrum",
   kind = "timer",
   tick_ms = M.SPECTRUM_TICK_MS,
-  option_keys = { "buckets", "tick_ms", "tooltip", "paused" },
+  option_keys = { "buckets", "tick_ms", "tooltip", "paused", "fg", "bg" },
   render = function(ctx)
     return M.spectrum_atoms(ctx)
   end,
@@ -3287,7 +3287,7 @@ M.MODULES.cpu = {
   name = "cpu",
   kind = "timer",
   tick_ms = M.CPU_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.cpu_atoms(ctx)
   end,
@@ -3297,7 +3297,7 @@ M.MODULES.memory = {
   name = "memory",
   kind = "timer",
   tick_ms = M.MEMORY_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.memory_atoms(ctx)
   end,
@@ -3307,7 +3307,7 @@ M.MODULES.battery = {
   name = "battery",
   kind = "timer",
   tick_ms = M.BATTERY_TICK_MS,
-  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip" },
+  option_keys = { "format", "warning", "critical", "tick_ms", "tooltip", "fg", "bg" },
   render = function(ctx)
     return M.battery_atoms(ctx)
   end,
@@ -3583,6 +3583,12 @@ function M.render_plan(opts, rows, now)
           local copy = {}
           for key, value in pairs(atom) do
             copy[key] = value
+          end
+          if copy.fg == nil and type(options.fg) == "string" and options.fg ~= "" then
+            copy.fg = options.fg
+          end
+          if copy.bg == nil and type(options.bg) == "string" and options.bg ~= "" then
+            copy.bg = options.bg
           end
           copy.hover = hover
           group[#group + 1] = copy
@@ -4323,13 +4329,13 @@ bitty.commands.register({
   end,
 })
 
--- Clock actions (bar#30): right cycles short/date/calendar text, middle shows
--- the full local date-time, left is a no-op. The cycle repaints immediately so
--- the new format is visible without waiting for the 60 s tick.
+-- Clock actions (bar#30): left/right cycle short/date/calendar text, middle
+-- shows the full local date-time. The cycle repaints immediately so the new
+-- format is visible without waiting for the 60 s tick.
 bitty.commands.register({
   id = CLOCK_ACTION_COMMAND_ID,
   title = "Unified Bar: clock action",
-  description = "Cycle the clock format on right; show the date-time detail on middle (clock region target).",
+  description = "Cycle the clock format on left/right; show the date-time detail on middle (clock region target).",
   args_schema = {
     type = "object",
     properties = click_properties({}),
@@ -4340,7 +4346,7 @@ bitty.commands.register({
     if button == "middle" then
       return notify_detail(M.clock_detail(now_seconds()))
     end
-    if button == "right" then
+    if button == "left" or button == "right" then
       M.clock_cycle()
       pcall(render)
       return true

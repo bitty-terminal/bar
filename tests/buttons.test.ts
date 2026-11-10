@@ -188,7 +188,8 @@ describe("clock buttons", () => {
     expect(run.host.notifications[0]!.body).toMatch(
       /^\w+, \d\d \w+ \d{4} \d\d:\d\d$/,
     );
-    expect(run.host.dispatchCommand(CLOCK, { button: "left" })).toBe(false);
+    expect(run.host.dispatchCommand(CLOCK, { button: "left" })).toBe(true);
+    expect(textOf(run.component())).toMatch(/^\w{3} \d\d \w{3}$/);
   });
 
   test("the atom carries the clock region", async () => {
