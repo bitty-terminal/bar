@@ -177,8 +177,8 @@ describe("rendering parity with the Core workspaceline", () => {
       },
       on_hover: {
         command: "bitty-terminal.bar:hover",
-        args: { region: "bar:module:workspaces" },
-        region: { id: "bar:module:workspaces", kind: "module" },
+        args: { region: "bar:module:workspaces:4" },
+        region: { id: "bar:module:workspaces:4", kind: "module" },
       },
     });
     expect(leaves(run.component())[0]?.bg).toBe("selection");
@@ -628,8 +628,8 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
         },
         on_hover: {
           command: "bitty-terminal.bar:hover",
-          args: { region: "bar:module:workspaces" },
-          region: { id: "bar:module:workspaces", kind: "module" },
+          args: { region: "bar:module:workspaces:4" },
+          region: { id: "bar:module:workspaces:4", kind: "module" },
         },
       },
     ]);

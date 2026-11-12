@@ -314,6 +314,10 @@ export async function activateBar(
   let scratchSidecar: ReadonlyArray<{
     readonly count: unknown;
     readonly occupied: unknown;
+    readonly windows?: unknown;
+    readonly panels?: unknown;
+    readonly window?: unknown;
+    readonly title?: unknown;
   }> = [];
   const captureScratch = (rows: readonly WorkspaceInfo[]): void => {
     scratchSidecar = rows.slice(0, 16).map((row) => {
@@ -321,6 +325,10 @@ export async function activateBar(
       return {
         count: record.scratchpad_count ?? 0,
         occupied: record.scratchpad_occupied ?? false,
+        windows: record.windows,
+        panels: record.panels,
+        window: record.window,
+        title: record.title,
       };
     });
   };
@@ -524,11 +532,16 @@ export async function activateBar(
               count: 0,
               occupied: false,
             };
-            return {
+            const merged: Record<string, unknown> = {
               ...row,
               scratchpad_count: scratch.count,
               scratchpad_occupied: scratch.occupied,
             };
+            if (scratch.windows !== undefined) merged.windows = scratch.windows;
+            if (scratch.panels !== undefined) merged.panels = scratch.panels;
+            if (scratch.window !== undefined) merged.window = scratch.window;
+            if (scratch.title !== undefined) merged.title = scratch.title;
+            return merged as unknown as WorkspaceInfo;
           },
         ),
     },
