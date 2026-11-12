@@ -1607,7 +1607,7 @@ end
 -- still round-trips enter/leave and clears the tooltip.
 function M.atoms_detail(atoms)
   for _, atom in ipairs(atoms) do
-    local detail = M.hover_detail_text(atom.tooltip)
+    local detail = M.hover_detail_text(atom.module_tooltip or atom.tooltip)
     if detail ~= nil then
       return detail
     end
@@ -1963,7 +1963,7 @@ end
 -- `workspace.<id>`, so left focuses, middle/right show the workspace detail,
 -- and the wheel cycles to the previous/next workspace. Separators, the empty
 -- placeholder, and the scratchpad indicator stay non-interactive.
-local function segment_atom(segment)
+local function segment_atom(segment, detail)
   local atom = { text = segment.text, whole = true }
   if segment.kind == "pill" then
     if segment.active then
@@ -1986,24 +1986,35 @@ local function segment_atom(segment)
       "item"
     )
     atom.on_scroll = M.click_binding(M.WORKSPACE_ACTION_COMMAND, {}, region, "item")
+    atom.hover_suffix = tostring(segment.id)
+    if detail ~= nil then
+      atom.tooltip = detail
+    end
   elseif segment.kind == "separator" then
     atom.separator = true
   end
   return atom
 end
 
--- Workspaces module render: the capsule strip as chassis atoms. The strip
--- detail (the same text middle/right click shows) rides the first atom as the
--- module's hover tooltip; every capsule still carries its own item region for
--- clicks.
+-- Workspaces module render: the capsule strip as chassis atoms. Each capsule
+-- carries its own workspace detail tooltip and per-capsule hover region suffix
+-- (`bar:module:workspaces:<id>`), while the strip summary rides `module_tooltip`
+-- on the first atom for the module-level hover region (`bar:module:workspaces`).
 function M.workspaces_atoms(rows, opts, options)
   local atoms = {}
   for _, segment in ipairs(M.segments(rows, opts, options)) do
-    atoms[#atoms + 1] = segment_atom(segment)
+    local item_detail = nil
+    if segment.kind == "pill" then
+      item_detail = M.workspace_detail(rows, segment.id)
+    end
+    atoms[#atoms + 1] = segment_atom(segment, item_detail)
   end
   local detail = M.workspace_detail(rows, nil)
   if detail ~= nil and atoms[1] ~= nil then
-    atoms[1].tooltip = detail
+    atoms[1].module_tooltip = detail
+    if atoms[1].tooltip == nil then
+      atoms[1].tooltip = detail
+    end
   end
   return atoms
 end
@@ -4400,7 +4411,20 @@ function M.render_plan(opts, rows, now)
           if copy.bg == nil and type(options.bg) == "string" and options.bg ~= "" then
             copy.bg = options.bg
           end
-          copy.hover = hover
+          local atom_hover = hover
+          if region ~= nil and type(copy.hover_suffix) == "string" and copy.hover_suffix ~= "" then
+            local item_region = region .. ":" .. copy.hover_suffix
+            if M.valid_region_id(item_region) then
+              local item_detail = M.hover_detail_text(copy.tooltip)
+              if item_detail ~= nil then
+                details[item_region] = item_detail
+              end
+              atom_hover = M.hover_binding(item_region)
+            end
+          end
+          copy.hover_suffix = nil
+          copy.module_tooltip = nil
+          copy.hover = atom_hover
           group[#group + 1] = copy
         end
       end
@@ -4475,8 +4499,50 @@ function M.focus_target(rows, id)
   return nil
 end
 
--- Detail text for one workspace (middle/right click) or for the whole strip
--- when `id` is absent. Nil when the id names no current row.
+-- Extracts bounded window/panel content descriptions from a workspace row
+-- (`windows`, `panels`, `window`, or `title`), or nil when absent.
+function M.workspace_windows_text(row)
+  if type(row) ~= "table" and type(row) ~= "userdata" then
+    return nil
+  end
+  local list = row.windows
+  if not is_collection(list) then
+    list = row.panels
+  end
+  if is_collection(list) then
+    local items = {}
+    local count = math.min(list_len(list), M.MAX_WORKSPACES)
+    for index = 1, count do
+      local entry = list[index]
+      local label = nil
+      if type(entry) == "string" and entry ~= "" then
+        label = M.truncate_chars(M.compact(entry), M.NAME_MAX_CHARS)
+      elseif is_collection(entry) then
+        local raw = entry.title or entry.name or entry.command or entry.cmd or entry.cwd
+        if type(raw) == "string" and raw ~= "" then
+          label = M.truncate_chars(M.compact(raw), M.NAME_MAX_CHARS)
+        end
+      end
+      if type(label) == "string" and label ~= "" then
+        items[#items + 1] = label
+      end
+    end
+    if #items > 0 then
+      return table.concat(items, ", ")
+    end
+  end
+  local single = row.window or row.title
+  if type(single) == "string" and single ~= "" then
+    local cleaned = M.truncate_chars(M.compact(single), M.NAME_MAX_CHARS)
+    if cleaned ~= "" then
+      return cleaned
+    end
+  end
+  return nil
+end
+
+-- Detail text for one workspace (hover or middle/right click) or for the whole
+-- strip when `id` is absent. Nil when the id names no current row.
 function M.workspace_detail(rows, id)
   if is_integer(id) then
     for _, row in ipairs(rows) do
@@ -4500,6 +4566,10 @@ function M.workspace_detail(rows, id)
         if #marks > 0 then
           text = text .. " (" .. table.concat(marks, ", ") .. ")"
         end
+        local windows = M.workspace_windows_text(row)
+        if windows ~= nil then
+          text = text .. " [" .. windows .. "]"
+        end
         return M.truncate_bytes(text, M.TEMPLATE_MAX_BYTES)
       end
     end
@@ -4513,6 +4583,10 @@ function M.workspace_detail(rows, id)
     local label = tostring(row.id)
     if row.active == true then
       label = label .. "*"
+    end
+    local windows = M.workspace_windows_text(row)
+    if windows ~= nil then
+      label = label .. " (" .. windows .. ")"
     end
     parts[#parts + 1] = label
   end

@@ -181,20 +181,47 @@ describe("hover regions", () => {
 
     const bindings = hoverBindings(run);
     expect(bindings.length).toBeGreaterThan(0);
-    // One region per module instance: every atom of a module shares it, and
-    // no two modules share an id.
+    // Each workspace capsule carries its own `bar:module:workspaces:<id>`
+    // hover region alongside the strip separator region `bar:module:workspaces`
+    // and the other modules (`clock`, `cpu`).
     const ids = [...new Set(bindings.map((binding) => binding.region!.id))];
-    expect(ids).toHaveLength(3);
+    expect(ids).toEqual([
+      "bar:module:workspaces:1",
+      "bar:module:workspaces",
+      "bar:module:workspaces:4",
+      "bar:module:workspaces:9",
+      "bar:module:clock",
+      "bar:module:cpu",
+    ]);
 
     const workspaceAtoms = leaves(groups(run)[0]!);
-    expect(workspaceAtoms.length).toBeGreaterThan(0);
-    for (const leaf of workspaceAtoms) {
-      expect(leaf.on_hover).toEqual({
+    expect(workspaceAtoms.map((leaf) => leaf.on_hover)).toEqual([
+      {
+        command: HOVER_COMMAND,
+        args: { region: "bar:module:workspaces:1" },
+        region: { id: "bar:module:workspaces:1", kind: "module" },
+      },
+      {
         command: HOVER_COMMAND,
         args: { region: "bar:module:workspaces" },
         region: { id: "bar:module:workspaces", kind: "module" },
-      });
-    }
+      },
+      {
+        command: HOVER_COMMAND,
+        args: { region: "bar:module:workspaces:4" },
+        region: { id: "bar:module:workspaces:4", kind: "module" },
+      },
+      {
+        command: HOVER_COMMAND,
+        args: { region: "bar:module:workspaces" },
+        region: { id: "bar:module:workspaces", kind: "module" },
+      },
+      {
+        command: HOVER_COMMAND,
+        args: { region: "bar:module:workspaces:9" },
+        region: { id: "bar:module:workspaces:9", kind: "module" },
+      },
+    ]);
     for (const binding of bindings) {
       expect(binding.command).toBe(HOVER_COMMAND);
       expect(binding.region!.kind).toBe("module");
@@ -280,7 +307,7 @@ describe("overlay tooltip lifecycle", () => {
       region: workspaceRegion,
       phase: "enter",
     });
-    expect(run.overlayText()).toBe("Workspaces: 1, 4*, 9");
+    expect(run.overlayText()).toBe("Workspace 1: ws1");
     run.host.dispatchCommand(HOVER_COMMAND, {
       region: cpuRegion,
       phase: "enter",
@@ -294,6 +321,61 @@ describe("overlay tooltip lifecycle", () => {
       phase: "leave",
     });
     expect(run.overlayText()).toBe("CPU 42% (2 cores)");
+  });
+
+  test("hovering workspace capsules shows per-workspace window contents and details", async () => {
+    const rows = [
+      {
+        ...ws(1, "dev", false, 2),
+        windows: ["nvim src/main.rs", "cargo test"],
+      } as WorkspaceInfo,
+      {
+        ...ws(4, "code", true, 2),
+        panels: [{ title: "agy" }, { cmd: "fish" }],
+      } as WorkspaceInfo,
+      {
+        ...ws(9, "logs", false, 1),
+        title: "journalctl -f",
+      } as WorkspaceInfo,
+    ];
+    const run = await bar({ workspaces: rows });
+    const atoms = leaves(groups(run)[0]!);
+
+    // Hover capsule 1: shows workspace 1 name, panel count, and windows list.
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: atoms[0]!.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.overlayText()).toBe(
+      "Workspace 1: dev (2 panels) [nvim src/main.rs, cargo test]",
+    );
+
+    // Hover capsule 4: shows active state, panel count, and panel titles/cmds.
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: atoms[2]!.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.overlayText()).toBe(
+      "Workspace 4: code (active, 2 panels) [agy, fish]",
+    );
+
+    // Hover capsule 9: shows single window title.
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: atoms[4]!.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.overlayText()).toBe(
+      "Workspace 9: logs (1 panels) [journalctl -f]",
+    );
+
+    // Hover strip separator (`bar:module:workspaces`): shows full strip summary with window contents.
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: atoms[1]!.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.overlayText()).toBe(
+      "Workspaces: 1 (nvim src/main.rs, cargo test), 4* (agy, fish), 9 (journalctl -f)",
+    );
   });
 
   test("hover detail refreshes on a live module tick", async () => {
@@ -537,7 +619,7 @@ describe("edge mounts and capability fail-closed", () => {
       expect(run.mounts.map((mount) => mount.slot)).toEqual([edge, "overlay"]);
       const region = leaves(run.component())[0]!.on_hover!.region!.id;
       run.host.dispatchCommand(HOVER_COMMAND, { region, phase: "enter" });
-      expect(run.overlayText()).toBe("Workspaces: 1, 4*, 9");
+      expect(run.overlayText()).toBe("Workspace 1: ws1");
     },
   );
 
@@ -570,6 +652,13 @@ describe("edge mounts and capability fail-closed", () => {
     });
     const ids = regionIds(run);
     expect(ids).not.toContain("bar:module:cpu");
-    expect(new Set(ids)).toEqual(new Set(["bar:module:workspaces"]));
+    expect(new Set(ids)).toEqual(
+      new Set([
+        "bar:module:workspaces:1",
+        "bar:module:workspaces",
+        "bar:module:workspaces:4",
+        "bar:module:workspaces:9",
+      ]),
+    );
   });
 });
