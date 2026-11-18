@@ -38,6 +38,15 @@
 -- The host evaluates this file once per plugin activation and owns every
 -- resource created here for the lifetime of that generation. The code stays
 -- inside the Lua 5.1 grammar (the `just lua` gate) and uses no `utf8` library.
+--
+-- The component-catalog dogfood (bitty#2114) composes the band, the
+-- workspaces pill row, and the tooltip/detail fallback against the shipped
+-- extension component catalog (`crates/bitty-lua/src/ui_catalog.rs`, module
+-- `ui_catalog`) through the local recipe projection in the "Extension
+-- component catalog recipes" section below: the catalog owns the entry
+-- shapes, the caps, and the region order, this file owns the presentation
+-- (the padded capsule, the per-module decoration, and the four deltas the
+-- recipes declare).
 
 local M = {}
 
@@ -157,6 +166,327 @@ M.DEFAULT_MODULE_PLAN = {
 -- same group. Groups are placed by Core anchors, so no separator is emitted
 -- between groups (a manual pad would break true centering and right flush).
 M.MODULE_GAP = " "
+
+-- ---------------------------------------------------------------------------
+-- Extension component catalog recipes (bitty#2114 dogfood)
+--
+-- The shipped component catalog is API-level truth in bitty
+-- `crates/bitty-lua/src/ui_catalog.rs` (module `ui_catalog`): five typed
+-- descriptors composed only from the accepted v1 node set (`Text`, `Row`,
+-- `Column`, `List`) with inclusive caps. Core exposes no Lua-visible surface
+-- for it yet, so this section is the plugin half of the dogfood: the bar
+-- declares which entry it composes, bounds that declaration with the
+-- catalog's caps, and emits the canonical node kinds through the
+-- `M.catalog_*` builders instead of hand-assembling Row/Text tables at each
+-- call site (`M.catalog_band_node` -> the band root, `M.catalog_pill_row` ->
+-- the workspaces pill row, `M.catalog_detail_node`/
+-- `M.catalog_detail_binding` -> the tooltip/detail fallback).
+--
+-- This is a projection, never a second source of truth: no entry, spelling,
+-- or cap is invented here. Every constant below names the `ui_catalog`
+-- constant it mirrors, `tests/catalog.test.ts` pins the mirrored values in one
+-- place, and the shipped module stays authoritative -- extend `ui_catalog`,
+-- never this table.
+--
+-- Declared deltas (each is Core-owned behaviour the bar cannot adopt without
+-- changing shipped output; all four are pinned by tests):
+--   D1 omission: a region whose modules are all hidden is omitted, not
+--      emitted as an empty region `Row` that would paint nothing.
+--   D2 no region separator: the catalog joins two non-empty regions with one
+--      space; the bar emits no pad between groups, because Core anchors every
+--      child group against the band width and a manual pad would break true
+--      centering and right flush (Core #2411).
+--   D3 pill spelling: the bar's pill is a padded capsule (`" 1 "`), not a
+--      bracketed `[1]` (Core v1 has no corner-radius primitive, so the filled
+--      padded capsule is the shipped form). The shape stays the catalog's: one
+--      `Text` leaf per pill, single-space separators, declaration order.
+--   D4 item-size caps: `segment_bytes`, `pill_label_bytes`, and `detail_bytes`
+--      are measured, not enforced. The bar's own bounds (256 display cells per
+--      module atom, 32 characters per workspace name, 256 bytes per detail)
+--      are anchored to a different contract, so enforcing the catalog's would
+--      cut shipped output. The composers report every overrun through their
+--      `violations` list, so the gap stays measurable instead of invisible.
+-- ---------------------------------------------------------------------------
+
+-- Closed entry set in canonical declaration order (`CatalogEntry::ALL`). Ids
+-- are exact and case-sensitive with no aliases (`CatalogEntry::parse`).
+M.CATALOG_ENTRIES = {
+  "band",
+  "pill-row",
+  "tooltip-detail-fallback",
+  "modal-sheet",
+  "status-strip",
+}
+
+-- Inclusive caps (UTF-8 bytes / item counts), each the value of the
+-- `ui_catalog` constant named beside it. The three aggregate caps mirror
+-- `UI_MAX_*` in `crates/bitty-lua/src/ui.rs` through the catalog.
+M.CATALOG_CAPS = {
+  segments = 64, -- CATALOG_MAX_SEGMENTS
+  pills = 64, -- CATALOG_MAX_PILLS
+  rows = 64, -- CATALOG_MAX_ROWS
+  segment_bytes = 64, -- CATALOG_MAX_SEGMENT_BYTES
+  pill_label_bytes = 32, -- CATALOG_MAX_PILL_LABEL_BYTES
+  detail_bytes = 128, -- CATALOG_MAX_DETAIL_BYTES
+  text_bytes = 262144, -- CATALOG_MAX_TEXT_BYTES (UI_MAX_TEXT_BYTES, 256 KiB)
+  nodes = 2048, -- CATALOG_MAX_NODES (UI_MAX_NODES)
+  depth = 16, -- CATALOG_MAX_DEPTH (UI_MAX_DEPTH)
+}
+
+-- Region anchors a `band`/`status-strip` declaration may use, in render order.
+-- The values are exactly the ones `M.GROUP_ANCHORS` maps each settings group
+-- to, so a group refactor cannot silently leave the catalog's set behind.
+M.CATALOG_ANCHORS = { "left", "center", "right" }
+
+-- Emission set: the accepted v1 surface (`UI_V1_NODE_KINDS`). No recipe below
+-- emits anything else.
+M.CATALOG_NODE_KINDS = { Text = true, Row = true, Column = true, List = true }
+
+-- Canonical pill spelling (`PILL_OPEN`/`PILL_CLOSE`). `M.CATALOG_PILL_SPELLING`
+-- is the bar's override (delta D3): the capsule padding instead of brackets.
+M.CATALOG_PILL_OPEN = "["
+M.CATALOG_PILL_CLOSE = "]"
+M.CATALOG_PILL_SPELLING = { open = M.CAPSULE_PAD, close = M.CAPSULE_PAD }
+
+-- Canonical entry id for `name`, or nil when it is outside the closed set.
+function M.catalog_entry(name)
+  if type(name) ~= "string" then
+    return nil
+  end
+  for index = 1, #M.CATALOG_ENTRIES do
+    if M.CATALOG_ENTRIES[index] == name then
+      return name
+    end
+  end
+  return nil
+end
+
+-- Whether `kind` is in the accepted v1 node set.
+function M.catalog_node_kind(kind)
+  return type(kind) == "string" and M.CATALOG_NODE_KINDS[kind] == true
+end
+
+-- One reportable catalog finding: a typed rejection of the shipped module
+-- (`ItemTooLong`, `TooManyItems`, `EmptyItem`, `EmptyBlock`,
+-- `ReservedDelimiter`) carried as data instead of a refused composition, so a
+-- measured cap (delta D4) stays visible without changing shipped output.
+local function catalog_violation(entry, reason, index, length, cap)
+  return {
+    entry = entry,
+    reason = reason,
+    index = index,
+    len = length,
+    cap = cap,
+  }
+end
+
+-- Iterative scene bounds (`check_scene_bounds`): node count, nesting depth,
+-- emitted node kinds, and summed text bytes. Returns the bounds table, or nil
+-- plus the breached cap's name and found value. Iterative on purpose: a
+-- supplied tree is untrusted, so neither depth nor a wide child list may grow
+-- past the caps before rejection.
+function M.catalog_bounds(node)
+  local pending = { { node = node, depth = 1 } }
+  local seen = 0
+  local bytes = 0
+  local depth = 0
+  while #pending > 0 do
+    local frame = table.remove(pending)
+    local current = frame.node
+    local level = frame.depth
+    seen = seen + 1
+    if level > depth then
+      depth = level
+    end
+    if seen > M.CATALOG_CAPS.nodes then
+      return nil, "nodes", seen
+    end
+    if level > M.CATALOG_CAPS.depth then
+      return nil, "depth", level
+    end
+    if current == nil or not M.catalog_node_kind(current.kind) then
+      return nil, "kind", level
+    end
+    if current.kind == "Text" then
+      if type(current.text) == "string" then
+        bytes = bytes + #current.text
+      end
+      if bytes > M.CATALOG_CAPS.text_bytes then
+        return nil, "text_bytes", bytes
+      end
+    elseif type(current.children) == "table" then
+      for index = #current.children, 1, -1 do
+        pending[#pending + 1] = { node = current.children[index], depth = level + 1 }
+      end
+    end
+  end
+  return { nodes = seen, depth = depth, bytes = bytes }
+end
+
+-- `band` region row (`compose_group`): one anchored child `Row` holding the
+-- region's leaves in declaration order. The leaves already carry their own
+-- in-region gaps, so the recipe adds no separator (delta D2).
+function M.catalog_region_node(anchor, leaves)
+  if type(leaves) ~= "table" or #leaves == 0 then
+    return nil
+  end
+  local children = {}
+  for index = 1, #leaves do
+    children[index] = leaves[index]
+  end
+  return { kind = "Row", anchor = anchor, children = children }
+end
+
+-- Scene nodes for one region's declaration-level atoms. `M.atom_node` turns
+-- each atom into its `Text` leaf -- the only leaf kind every recipe emits.
+function M.catalog_leaves(atoms)
+  local leaves = {}
+  if type(atoms) ~= "table" then
+    return leaves
+  end
+  for index = 1, #atoms do
+    leaves[#leaves + 1] = M.atom_node(atoms[index])
+  end
+  return leaves
+end
+
+-- `pill-row` recipe: the module-level pill disclosure. One `Text` leaf per
+-- pill spelled `open .. label .. close`, joined by a single-space separator,
+-- in declaration order, with `active` carried as redundant emphasis on the
+-- caller's leaf (never the only state carrier).
+--
+-- `pills` is a plain array of `{ label, active?, ... }`; `spelling` overrides
+-- the brackets (`{ open = ..., close = ... }`). Returns the ordered
+-- declaration items -- `{ text = <spelled label>, pill = <index> }` for a pill,
+-- `{ text = " ", separator = true }` for a separator -- plus the violation
+-- list, or nil plus an `EmptyBlock` finding when there is no pill: the catalog
+-- rejects an empty declaration, so the caller paints its own placeholder
+-- instead of an empty row (residual R6).
+function M.catalog_pill_row(pills, spelling)
+  local entry = "pill-row"
+  if type(pills) ~= "table" or #pills == 0 then
+    return nil, { catalog_violation(entry, "EmptyBlock", 0, 0, 0) }
+  end
+  local open = M.CATALOG_PILL_OPEN
+  local close = M.CATALOG_PILL_CLOSE
+  if type(spelling) == "table" then
+    if type(spelling.open) == "string" then
+      open = spelling.open
+    end
+    if type(spelling.close) == "string" then
+      close = spelling.close
+    end
+  end
+  local violations = {}
+  if #pills > M.CATALOG_CAPS.pills then
+    violations[#violations + 1] =
+      catalog_violation(entry, "TooManyItems", 0, #pills, M.CATALOG_CAPS.pills)
+  end
+  local items = {}
+  for index = 1, #pills do
+    local label = pills[index].label
+    if type(label) ~= "string" or label == "" then
+      violations[#violations + 1] = catalog_violation(entry, "EmptyItem", index, 0, 0)
+      label = ""
+    elseif #label > M.CATALOG_CAPS.pill_label_bytes then
+      violations[#violations + 1] =
+        catalog_violation(entry, "ItemTooLong", index, #label, M.CATALOG_CAPS.pill_label_bytes)
+    end
+    if type(label) == "string" and
+        (string.find(label, M.CATALOG_PILL_OPEN, 1, true) ~= nil or
+          string.find(label, M.CATALOG_PILL_CLOSE, 1, true) ~= nil) then
+      violations[#violations + 1] = catalog_violation(entry, "ReservedDelimiter", index, 0, 0)
+    end
+    if index > 1 then
+      items[#items + 1] = { text = " ", separator = true }
+    end
+    items[#items + 1] = { text = open .. label .. close, pill = index }
+  end
+  return items, violations
+end
+
+-- `band` recipe: one plain `Row` root (no anchor, no style, no binding) whose
+-- children are the declared regions in canonical order left -> center ->
+-- right, each an anchored child `Row` (`M.catalog_region_node`). This is the
+-- band's single composition site: `M.render_bar` hands it the regions it
+-- painted and gets the whole scene back.
+--
+-- `regions` is an ordered array of `{ anchor, atoms, segments }` -- only the
+-- regions to paint (delta D1), the region's declaration-level atoms, and how
+-- many reaching segments (module contributions) they hold. Returns the root
+-- node, or nil plus a reason when the declaration is outside the catalog: no
+-- region, an anchor outside `M.CATALOG_ANCHORS`, a region repeated or out of
+-- canonical order, more than `MAX_SEGMENTS` segments, or an aggregate cap
+-- breach. A refused declaration paints nothing (fail closed), never a partial
+-- surface.
+function M.catalog_band_node(regions)
+  if type(regions) ~= "table" or #regions == 0 then
+    return nil, "EmptyBlock"
+  end
+  local children = {}
+  local seen = {}
+  local segments = 0
+  local cursor = 0
+  for index = 1, #regions do
+    local region = regions[index]
+    local anchor = region.anchor
+    local position = nil
+    for slot = 1, #M.CATALOG_ANCHORS do
+      if M.CATALOG_ANCHORS[slot] == anchor then
+        position = slot
+      end
+    end
+    if position == nil or seen[anchor] or position <= cursor then
+      return nil, "UnknownAnchor"
+    end
+    cursor = position
+    seen[anchor] = true
+    local row = M.catalog_region_node(anchor, M.catalog_leaves(region.atoms))
+    if row == nil then
+      return nil, "EmptyBlock"
+    end
+    children[#children + 1] = row
+    segments = segments + (region.segments or 0)
+  end
+  if segments > M.CATALOG_CAPS.segments then
+    return nil, "TooManyItems"
+  end
+  local node = { kind = "Row", children = children }
+  local bounds, reason = M.catalog_bounds(node)
+  if bounds == nil then
+    return nil, reason
+  end
+  return node
+end
+
+-- `tooltip-detail-fallback` recipe: one plain `Text` leaf carrying the bounded
+-- detail line -- the overlay body the host presents when it has no richer
+-- tooltip vehicle. Returns the node plus the violation list, or nil plus an
+-- `EmptyBlock` finding for an empty detail (an empty declaration is rejected;
+-- clearing the tooltip is not a declaration, see `show_tooltip`).
+function M.catalog_detail_node(text)
+  local entry = "tooltip-detail-fallback"
+  if type(text) ~= "string" or text == "" then
+    return nil, { catalog_violation(entry, "EmptyBlock", 0, 0, 0) }
+  end
+  local violations = {}
+  if #text > M.CATALOG_CAPS.detail_bytes then
+    violations[1] =
+      catalog_violation(entry, "ItemTooLong", 0, #text, M.CATALOG_CAPS.detail_bytes)
+  end
+  return { kind = "Text", text = text }, violations
+end
+
+-- The detail fallback's click vehicle: the registered `detail` command with
+-- the bounded detail text as its argument. The recipe's own leaf is the
+-- overlay body; a read-only atom binds this instead, so one text contract
+-- covers both spellings of the fallback.
+function M.catalog_detail_binding(text, region)
+  if type(text) ~= "string" or text == "" then
+    return nil
+  end
+  return M.click_binding(M.DETAIL_COMMAND, { text = text }, region)
+end
 
 -- Hover tooltip (Core #2411). One stable region id per rendered module
 -- instance (`bar:module:<name>` plus a `:<n>` suffix for a repeated name), so
@@ -1895,14 +2225,21 @@ function M.visible(rows, opts)
   return M.scratchpad_state(rows).occupied
 end
 
--- Ordered bar segments before the byte bound: one padded capsule per
--- workspace (label plus state marks on a filled background) and single-space
+-- Ordered bar segments before the byte bound: one pill per workspace (label
+-- plus state marks, spelled by the `pill-row` recipe) and single-space
 -- separators. The label follows `opts.label` (`index` by default: the stable
 -- seq alone, so a two-workspace bar paints ` 1   2* `). The id stays the
 -- stable workspace seq from `bitty.workspace.list()` (Core
 -- `workspaceline_tokens` renders `slot.seq`), so closing a workspace never
 -- renumbers the survivors. The scratchpad indicator remains available after
 -- the capsule list when the slot is occupied.
+--
+-- The pill spelling, the separator, the declaration order, and the pill-count
+-- cap come from `M.catalog_pill_row` (bitty#2114 `pill-row`); this function
+-- owns only the ordering and the per-pill state the recipe carries. An empty
+-- workspace list is the Core-parity placeholder, which the catalog has no
+-- spelling for (an empty declaration is rejected): one plain `Text` leaf,
+-- recorded as residual R6.
 function M.segments(rows, opts, options)
   if #rows == 0 then
     return { { kind = "empty", text = M.EMPTY_PLACEHOLDER } }
@@ -1920,13 +2257,10 @@ function M.segments(rows, opts, options)
     end
     ordered[cursor + 1] = row
   end
-  local out = {}
+  local pills = {}
   local count = math.min(#ordered, M.MAX_WORKSPACES)
   for index = 1, count do
     local row = ordered[index]
-    if index > 1 then
-      out[#out + 1] = { kind = "separator", text = M.SEPARATOR }
-    end
     local marks = ""
     if row.active == true then
       marks = marks .. M.ACTIVE_MARK
@@ -1940,15 +2274,35 @@ function M.segments(rows, opts, options)
     if marks ~= "" then
       label = label .. marks
     end
-    out[#out + 1] = {
-      kind = "pill",
-      text = M.CAPSULE_PAD .. label .. M.CAPSULE_PAD,
+    pills[#pills + 1] = {
+      label = label,
       id = row.id,
       active = row.active == true,
       occupied = type(row.panel_count) == "number" and row.panel_count > 0,
       attention = attention ~= nil and
         (attention.bell == true or attention.activity == true or attention.exited == true),
     }
+  end
+  local out = {}
+  local items = M.catalog_pill_row(pills, M.CATALOG_PILL_SPELLING)
+  if items ~= nil then
+    for _, item in ipairs(items) do
+      if item.separator then
+        -- Segment kind `separator` (not the recipe's own spelling) keeps the
+        -- byte-bound drop of a trailing separator working (`M.clip`).
+        out[#out + 1] = { kind = "separator", text = item.text }
+      else
+        local pill = pills[item.pill]
+        out[#out + 1] = {
+          kind = "pill",
+          text = item.text,
+          id = pill.id,
+          active = pill.active,
+          occupied = pill.occupied,
+          attention = pill.attention,
+        }
+      end
+    end
   end
   local scratchpad = M.scratchpad_segment(rows)
   if scratchpad ~= nil then
@@ -4313,11 +4667,10 @@ function M.atom_node(atom)
   if atom.on_click ~= nil then
     node.on_click = atom.on_click
   elseif atom.tooltip ~= nil then
-    node.on_click = M.click_binding(
-      M.DETAIL_COMMAND,
-      { text = atom.tooltip },
-      atom.region
-    )
+    -- Catalog `tooltip-detail-fallback` rung: a read-only atom has no control
+    -- to bind, so its click is the explicit detail notification, carrying the
+    -- same bounded detail text the overlay body uses.
+    node.on_click = M.catalog_detail_binding(atom.tooltip, atom.region)
   end
   if atom.on_scroll ~= nil then
     node.on_scroll = atom.on_scroll
@@ -4328,18 +4681,12 @@ function M.atom_node(atom)
   return node
 end
 
--- One anchored group row for the scene root (Core #2411). Only non-empty
--- groups are emitted: an empty group would contribute a zero-width row that
--- paints nothing, and omitting it keeps the scene (and the host's node
--- budget) minimal. A group whose modules are all hidden therefore behaves
--- exactly like an unset group.
-function M.group_node(anchor, atoms)
-  local children = {}
-  for _, atom in ipairs(atoms) do
-    children[#children + 1] = M.atom_node(atom)
-  end
-  return { kind = "Row", anchor = anchor, children = children }
-end
+-- The anchored group row for the scene root (Core #2411) is the `band`
+-- recipe's region row, `M.catalog_region_node`, composed per region by
+-- `M.catalog_band_node`. Only non-empty groups reach it: an empty group would
+-- contribute a zero-width row that paints nothing, and omitting it keeps the
+-- scene (and the host's node budget) minimal (delta D1), so a group whose
+-- modules are all hidden behaves exactly like an unset group.
 
 -- Renders the plan into one atom list per group: each module's atoms in
 -- order, joined by a single space inside its group. Every atom carries its
@@ -4352,8 +4699,10 @@ end
 -- options stay module-local.
 function M.render_plan(opts, rows, now)
   local groups = {}
+  local segment_counts = {}
   for _, key in ipairs(M.MODULE_GROUPS) do
     groups[key] = {}
+    segment_counts[key] = 0
   end
   local details = {}
   local seen = {}
@@ -4389,6 +4738,13 @@ function M.render_plan(opts, rows, now)
       })
       local group = groups[spec.group or M.MODULE_GROUPS[1]]
       if type(rendered) == "table" and #rendered > 0 and group ~= nil then
+        -- One catalog `band` segment per rendered module contribution; the
+        -- count feeds the recipe's `MAX_SEGMENTS` check instead of leaving the
+        -- catalog's segment bound unmeasured.
+        local group_key = spec.group or M.MODULE_GROUPS[1]
+        if segment_counts[group_key] ~= nil then
+          segment_counts[group_key] = segment_counts[group_key] + 1
+        end
         local detail = M.atoms_detail(rendered)
         if detail ~= nil and region ~= nil then
           details[region] = detail
@@ -4443,18 +4799,22 @@ function M.render_plan(opts, rows, now)
       remaining = 0
     end
   end
-  return groups, details
+  return groups, details, segment_counts
 end
 
 -- Full bar for the given settings, rows, and clock reading: the scene root
 -- Row with one anchored child Row per module group, plus the region→detail
--- map the hover command serves. `component` keeps the pure scene-only entry
--- point used by callers that do not need the detail map.
+-- map the hover command serves. The root and its region rows are the catalog's
+-- `band` recipe (bitty#2114): `M.catalog_band_node` composes them from the
+-- regions this function painted, so a provider-less group is omitted (D1), no
+-- pad is emitted between groups (D2), and an out-of-catalog declaration paints
+-- nothing instead of a partial surface. `component` keeps the pure scene-only
+-- entry point used by callers that do not need the detail map.
 function M.render_bar(opts, rows, now)
   if not M.visible(rows, opts) then
     return { component = HIDDEN, details = {}, visible = false }
   end
-  local groups, details = M.render_plan(opts, rows, now)
+  local groups, details, segment_counts = M.render_plan(opts, rows, now)
   local painted = 0
   for _, key in ipairs(M.MODULE_GROUPS) do
     for _, atom in ipairs(groups[key]) do
@@ -4464,17 +4824,21 @@ function M.render_bar(opts, rows, now)
   if painted == 0 then
     return { component = HIDDEN, details = {}, visible = false }
   end
-  local children = {}
+  local regions = {}
   for _, key in ipairs(M.MODULE_GROUPS) do
     if #groups[key] > 0 then
-      children[#children + 1] = M.group_node(M.GROUP_ANCHORS[key], groups[key])
+      regions[#regions + 1] = {
+        anchor = M.GROUP_ANCHORS[key],
+        atoms = groups[key],
+        segments = segment_counts[key],
+      }
     end
   end
-  return {
-    component = { kind = "Row", children = children },
-    details = details,
-    visible = true,
-  }
+  local component = M.catalog_band_node(regions)
+  if component == nil then
+    return { component = HIDDEN, details = {}, visible = false }
+  end
+  return { component = component, details = details, visible = true }
 end
 
 -- Full bar component for the given settings, rows, and clock reading.
@@ -4712,9 +5076,11 @@ local function current_bar()
   return M.render_bar(opts, bitty.workspace.list(), now_seconds())
 end
 
--- Replaces the overlay tooltip text. An unchanged text is a no-op, and an
--- absent overlay block (an older host or a denied `ui.overlay` grant) fails
--- closed: the bar still paints, only the tooltip is missing.
+-- Replaces the overlay tooltip text. The body is the catalog's
+-- `tooltip-detail-fallback` leaf: one plain `Text` node, no style, no binding,
+-- no authority. An unchanged text is a no-op, and an absent overlay block (an
+-- older host or a denied `ui.overlay` grant) fails closed: the bar still
+-- paints, only the tooltip is missing.
 local function show_tooltip(text)
   text = text or ""
   if text == overlay_text then
@@ -4723,10 +5089,14 @@ local function show_tooltip(text)
   if overlay_block == nil then
     return false
   end
-  local ok, updated = pcall(bitty.ui.update, overlay_block, {
-    kind = "Text",
-    text = text,
-  })
+  local node = M.catalog_detail_node(text)
+  if node == nil then
+    -- Clearing the tooltip is not a declaration: the catalog rejects an empty
+    -- block, so the clear keeps the one plain `Text` leaf shape with no text
+    -- instead of claiming a `tooltip-detail-fallback` entry.
+    node = { kind = "Text", text = "" }
+  end
+  local ok, updated = pcall(bitty.ui.update, overlay_block, node)
   if ok and updated == true then
     overlay_text = text
     return true
