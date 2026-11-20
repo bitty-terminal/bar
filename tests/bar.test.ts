@@ -703,10 +703,20 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("a lone workspace with an occupied slot shows the bar", async () => {
-    const rows = [ws(1, "ws1", true, OCCUPIED)];
-    const run = await bar({ workspaces: rows });
+  test("an occupied slot keeps a lone workspace visible under show_single = false", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "ws1", true, OCCUPIED)],
+      settings: { show_single: false },
+    });
     expect(painted(run)).toBe(" 1*  [scratchpad]");
+
+    // The same opt-out with an empty slot hides the band: only the occupied
+    // branch of `M.visible` can keep this lone workspace visible.
+    const empty = await bar({
+      workspaces: [ws(1, "ws1", true, EMPTY)],
+      settings: { show_single: false },
+    });
+    expect(painted(empty)).toBeUndefined();
   });
 
   test("occupancy needs no grant beyond workspace.read", async () => {
