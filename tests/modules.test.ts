@@ -19,6 +19,7 @@ import {
   activateBar,
   type BarRun,
   ENTRY_SOURCE,
+  HOVER_COMMAND,
   leaves,
   textOf,
   ws,
@@ -80,6 +81,38 @@ describe("declarative module list", () => {
       "bottom",
       "overlay",
     ]);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+
+  test("one workspace renders the shipped default plan sanely", async () => {
+    const run = await defaultBar({ workspaces: [ws(1, "ws1", true)] });
+    expect(painted(run)).toMatch(/^ 1\* \d\d:\d\d$/);
+
+    // Left capsule group plus the clock center group. The provider-backed
+    // right group hides fail closed without grants, so the single row keeps
+    // two anchored children rather than an empty third group.
+    expect(run.component().children?.length).toBe(2);
+
+    const [capsule, clock] = leaves(run.component());
+    expect(capsule?.text).toBe(" 1* ");
+    expect(capsule?.on_click?.args?.id).toBe(1);
+    expect(capsule?.on_click?.region?.id).toBe("workspace.1");
+    expect(capsule?.on_scroll?.region?.id).toBe("workspace.1");
+    expect(clock?.on_click?.region?.id).toBe("clock");
+
+    const hoverIds = leaves(run.component()).map(
+      (leaf) => leaf.on_hover?.region?.id,
+    );
+    // The module-level strip region rides the separator atoms, so a one-row
+    // strip has none; the capsule's own item region carries its detail.
+    expect(hoverIds).toContain("bar:module:workspaces:1");
+    expect(hoverIds).toContain("bar:module:clock");
+
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: "bar:module:workspaces:1",
+      phase: "enter",
+    });
+    expect(run.overlayText()).toStartWith("Workspace 1: ws1");
     expect(run.host.handlerViolations).toEqual([]);
   });
 

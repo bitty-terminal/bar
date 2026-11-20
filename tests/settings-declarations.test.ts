@@ -159,7 +159,7 @@ describe("bar#21 settings declarations match the entry point", () => {
     });
     expect(DECLARED.get("show_single")).toEqual({
       kind: "bool",
-      default: "false",
+      default: "true",
     });
     expect(DECLARED.get("name_max_chars")).toEqual({
       kind: "int",
@@ -187,7 +187,7 @@ describe("bar#21 settings declarations match the entry point", () => {
 
     expect(MODULE.DEFAULTS.show).toBe(true);
     expect(MODULE.DEFAULTS.edge).toBe("bottom");
-    expect(MODULE.DEFAULTS.show_single).toBe(false);
+    expect(MODULE.DEFAULTS.show_single).toBe(true);
     expect(MODULE.DEFAULTS.name_max_chars).toBe(MODULE.NAME_MAX_CHARS);
     expect(MODULE.DEFAULTS.label).toBe("index");
     expect(MODULE.DEFAULTS.max_length).toBe(0);
@@ -220,7 +220,7 @@ describe("bar#21 activation with declared settings", () => {
         "overlay",
       ]);
       // The four keys named by bar#21 are read and defaulted: capsules paint,
-      // the lone-workspace rule stays off, and the label stays bounded.
+      // the lone-workspace bar is on by default, and the label stays bounded.
       expect(capsules(run)).toEqual([" 1* ", " 4 "]);
       expect(painted(run)).toStartWith(" 1*   4 ");
     },
@@ -246,6 +246,8 @@ describe("bar#21 activation with declared settings", () => {
         settings: {
           show: true,
           edge: "top",
+          // Explicit opt-out: with two workspaces `show_single = false` has no
+          // effect, so the bar still paints both capsules.
           show_single: false,
           name_max_chars: 4,
           label: "both",
@@ -268,9 +270,14 @@ describe("bar#21 activation with declared settings", () => {
 
       const lone = await activate({
         workspaces: [ws(1, "ws1", true)],
-        settings: { show_single: true },
       });
       expect(capsules(lone)).toEqual([" 1* "]);
+
+      const optedOut = await activate({
+        workspaces: [ws(1, "ws1", true)],
+        settings: { show_single: false },
+      });
+      expect(painted(optedOut)).toBeUndefined();
     },
     ACTIVATION_TIMEOUT_MS,
   );

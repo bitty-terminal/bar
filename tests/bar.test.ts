@@ -242,7 +242,7 @@ describe("workspace label modes", () => {
   test("an empty name falls back to the seq, never a blank capsule", async () => {
     const run = await bar({
       workspaces: [ws(3, "", true)],
-      settings: { label: "name", show_single: true },
+      settings: { label: "name" },
     });
     expect(painted(run)).toBe(" 3* ");
   });
@@ -361,25 +361,34 @@ describe("workspace label modes", () => {
 });
 
 describe("visibility", () => {
-  test("a lone workspace hides the bar by default (Core CTX-0838)", async () => {
+  test("a lone workspace shows the bar by default", async () => {
     const rows = [ws(1, "ws1", true)];
     const run = await bar({ workspaces: rows });
-    expect(painted(run)).toBeUndefined();
+    expect(painted(run)).toBe(" 1* ");
+    // The plugin's shipped default deliberately diverges from the retired
+    // Core rule, which hid a lone workspace.
     expect(core.statusBarText(coreState(rows))).toBeUndefined();
   });
 
-  test("show_single opts into the lone-workspace bar", async () => {
+  test("show_single = false restores the lone-workspace auto-hide", async () => {
     const run = await bar({
       workspaces: [ws(1, "ws1", true)],
-      settings: { show_single: true },
+      settings: { show_single: false },
     });
-    expect(painted(run)).toBe(" 1* ");
+    expect(painted(run)).toBeUndefined();
   });
 
   test("show = false hides the bar like workspace.show_bar = false", async () => {
     const run = await bar({ workspaces: THREE, settings: { show: false } });
     expect(painted(run)).toBeUndefined();
     expect(core.statusBarText(coreState(THREE, false))).toBeUndefined();
+
+    // `show = false` wins over the lone-workspace default as well.
+    const lone = await bar({
+      workspaces: [ws(1, "ws1", true)],
+      settings: { show: false },
+    });
+    expect(painted(lone)).toBeUndefined();
   });
 
   test("invalid settings fall back to defaults", async () => {
@@ -404,6 +413,13 @@ describe("visibility", () => {
         body: "Unified Bar: unknown label 'id'; using 'index'.",
       },
     ]);
+
+    // A non-boolean `show_single` falls back to the visible default.
+    const lone = await bar({
+      workspaces: [ws(1, "ws1", true)],
+      settings: { show_single: 1 },
+    });
+    expect(painted(lone)).toBe(" 1* ");
   });
 
   test("name_max_chars shortens labels in name and both modes", async () => {
@@ -445,7 +461,7 @@ describe("edge", () => {
 describe("live updates", () => {
   test("workspace events re-render from bitty.workspace.list", async () => {
     const run = await bar({ workspaces: [ws(1, "ws1", true)] });
-    expect(painted(run)).toBeUndefined();
+    expect(painted(run)).toBe(" 1* ");
 
     run.host.setWorkspaces([ws(1, "ws1"), ws(2, "ws2", true)]);
     run.host.publish("workspace.created", { id: 2, name: "ws2" });
@@ -461,7 +477,8 @@ describe("live updates", () => {
 
     run.host.setWorkspaces([ws(2, "ws2", true)]);
     run.host.publish("workspace.closed", { id: 1 });
-    expect(painted(run)).toBeUndefined();
+    // Back down to one workspace: the shipped default keeps the bar visible.
+    expect(painted(run)).toBe(" 2* ");
     expect(run.host.handlerViolations).toEqual([]);
   });
 
@@ -686,10 +703,20 @@ describe("scratchpad indicator (W-104 R2-consumer, DEC-W104-1)", () => {
     expect(run.host.handlerViolations).toEqual([]);
   });
 
-  test("a lone workspace with an occupied slot shows the bar", async () => {
-    const rows = [ws(1, "ws1", true, OCCUPIED)];
-    const run = await bar({ workspaces: rows });
+  test("an occupied slot keeps a lone workspace visible under show_single = false", async () => {
+    const run = await bar({
+      workspaces: [ws(1, "ws1", true, OCCUPIED)],
+      settings: { show_single: false },
+    });
     expect(painted(run)).toBe(" 1*  [scratchpad]");
+
+    // The same opt-out with an empty slot hides the band: only the occupied
+    // branch of `M.visible` can keep this lone workspace visible.
+    const empty = await bar({
+      workspaces: [ws(1, "ws1", true, EMPTY)],
+      settings: { show_single: false },
+    });
+    expect(painted(empty)).toBeUndefined();
   });
 
   test("occupancy needs no grant beyond workspace.read", async () => {
