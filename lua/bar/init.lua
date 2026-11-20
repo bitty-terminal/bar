@@ -509,15 +509,17 @@ M.FORMAT_UNKNOWN_KEY_SUFFIX = "; rendering literally."
 
 -- Plugin settings (relative to plugins.<owner>.<name>) and their defaults.
 -- `show` / `edge` replace the retired Core `workspace.show_bar` /
--- `workspace.bar.edge`; `show_single` opts into a lone-workspace bar, which
--- Core always hid. `name_max_chars` keeps the Core pill-name bound and
+-- `workspace.bar.edge`; `show_single` keeps a lone-workspace bar visible and
+-- defaults to `true`, so an installed bar always presents; `false` restores
+-- the historical Core auto-hide on a lone workspace.
+-- `name_max_chars` keeps the Core pill-name bound and
 -- `label` selects the capsule label mode; `icons` selects the icon map;
 -- `max_length` bounds module text in display cells (`0` = unbounded);
 -- `rewrite` holds ordered Lua pattern rewrite rules (`{}` = none).
 M.DEFAULTS = {
   show = true,
   edge = "bottom",
-  show_single = false,
+  show_single = true,
   name_max_chars = M.NAME_MAX_CHARS,
   label = M.LABEL_DEFAULT,
   icons = M.ICON_SET_DEFAULT,
@@ -1879,9 +1881,10 @@ function M.scratchpad_segment(rows)
 end
 
 -- Whether the bar presents (Core `bar_present`): enabled, and either more
--- than one workspace, the fail-closed empty list, an explicit opt-in, or an
--- occupied scratchpad (window-global state worth showing even with a lone
--- workspace; an empty slot keeps the Core hide-lone behavior).
+-- than one workspace, the fail-closed empty list, `show_single` (the shipped
+-- default), or an occupied scratchpad (window-global state worth showing even
+-- with a lone workspace). With `show_single = false`, a lone workspace with an
+-- empty scratchpad hides the bar, exactly the historical Core rule.
 function M.visible(rows, opts)
   if not opts.show then
     return false

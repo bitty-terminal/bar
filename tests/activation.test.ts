@@ -119,7 +119,7 @@ describe("activation manifest declarations", () => {
     const expected: Readonly<Record<string, { kind: string; def: unknown }>> = {
       show: { kind: "bool", def: true },
       edge: { kind: "string", def: "bottom" },
-      show_single: { kind: "bool", def: false },
+      show_single: { kind: "bool", def: true },
       name_max_chars: { kind: "int", def: 32 },
       label: { kind: "string", def: "index" },
       icons: { kind: "string", def: "ascii" },

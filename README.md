@@ -78,38 +78,38 @@ Settings are declared in `bitty-plugin.toml` `[settings]` and resolved from
 `$XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua`. Every key is
 user-owned; the plugin never writes settings.
 
-| Key              | Type         | Default                                | Description                                                                                                                             | Applies         |
-| ---------------- | ------------ | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                                | Live            |
-| `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                            | Next activation |
-| `show_single`    | boolean      | `false`                                | Keep the bar visible when only one workspace exists. An occupied scratchpad also forces it visible.                                     | Live            |
-| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                        | Live            |
-| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                         | Live            |
-| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, `"nerd"`, or a state-keyed icon table; invalid values fall back to `"ascii"`. | Live            |
-| `max_length`     | integer      | `0`                                    | Maximum display cells per module text (`0` = unbounded, `1..256`); over-length strings truncate with `…` (U+2026).                      | Live            |
-| `rewrite`        | string array | `[]`                                   | Ordered Lua pattern rewrite rules (`"pattern=>replacement"` or `{ pattern, replacement }`, `<= 16` rules, `<= 1` capture `%1`/`$1`).    | Live            |
-| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group; anchored to the left inset edge.                                                               | Live            |
-| `modules_center` | string array | `["clock"]`                            | Ordered module names for the center group; centered on the full band row (never "after left").                                          | Live            |
-| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the right group; flush to the right inset edge.                                                                | Live            |
-| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults.      | Live            |
-| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                             | Live            |
-| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                           | Live            |
-| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                         | Live            |
-| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                         | Live            |
-| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                              | Live            |
-| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                        | Live            |
-| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                        | Live            |
-| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                          | Live            |
-| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                               | Live            |
-| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                            | Live            |
-| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                           | Live            |
+| Key              | Type         | Default                                | Description                                                                                                                                                                        | Applies         |
+| ---------------- | ------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `show`           | boolean      | `true`                                 | Mount and paint the bar.                                                                                                                                                           | Live            |
+| `edge`           | string       | `"bottom"`                             | Band slot, `"top"` or `"bottom"`; any other string falls back to `"bottom"`.                                                                                                       | Next activation |
+| `show_single`    | boolean      | `true`                                 | Keep the bar visible when only one workspace exists (the default). Set `false` to restore the historical lone-workspace auto-hide; an occupied scratchpad still forces it visible. | Live            |
+| `name_max_chars` | integer      | `32`                                   | Maximum characters per workspace name in `name` and `both` label modes, `1..32`.                                                                                                   | Live            |
+| `label`          | string       | `"index"`                              | Capsule label mode: `"index"`, `"name"`, or `"both"`; an unknown value falls back to `"index"`.                                                                                    | Live            |
+| `icons`          | string       | `"ascii"`                              | Icon map: `"ascii"` (default, unchanged output), `"pua"`, `"nerd"`, or a state-keyed icon table; invalid values fall back to `"ascii"`.                                            | Live            |
+| `max_length`     | integer      | `0`                                    | Maximum display cells per module text (`0` = unbounded, `1..256`); over-length strings truncate with `…` (U+2026).                                                                 | Live            |
+| `rewrite`        | string array | `[]`                                   | Ordered Lua pattern rewrite rules (`"pattern=>replacement"` or `{ pattern, replacement }`, `<= 16` rules, `<= 1` capture `%1`/`$1`).                                               | Live            |
+| `modules_left`   | string array | `["workspaces"]`                       | Ordered module names for the left group; anchored to the left inset edge.                                                                                                          | Live            |
+| `modules_center` | string array | `["clock"]`                            | Ordered module names for the center group; centered on the full band row (never "after left").                                                                                     | Live            |
+| `modules_right`  | string array | `["network","cpu","memory","battery"]` | Ordered module names for the right group; flush to the right inset edge.                                                                                                           | Live            |
+| `workspaces`     | string array | `[]`                                   | Per-module option collection for `workspaces`. Strict v1 settings accept a string array only, so option maps keep module defaults.                                                 | Live            |
+| `clock`          | string array | `[]`                                   | Per-module option collection for `clock`; same string-array limit as above.                                                                                                        | Live            |
+| `network`        | string array | `[]`                                   | Per-module option collection for `network`; same string-array limit as above.                                                                                                      | Live            |
+| `bluetooth`      | string array | `[]`                                   | Per-module option collection for `bluetooth`; same string-array limit as above.                                                                                                    | Live            |
+| `backlight`      | string array | `[]`                                   | Per-module option collection for `backlight`; same string-array limit as above.                                                                                                    | Live            |
+| `idle`           | string array | `[]`                                   | Per-module option collection for `idle`; same string-array limit as above.                                                                                                         | Live            |
+| `pulseaudio`     | string array | `[]`                                   | Per-module option collection for `pulseaudio`; same string-array limit as above.                                                                                                   | Live            |
+| `microphone`     | string array | `[]`                                   | Per-module option collection for `microphone`; same string-array limit as above.                                                                                                   | Live            |
+| `spectrum`       | string array | `[]`                                   | Per-module option collection for `spectrum`; same string-array limit as above.                                                                                                     | Live            |
+| `cpu`            | string array | `[]`                                   | Per-module option collection for `cpu`; same string-array limit as above.                                                                                                          | Live            |
+| `memory`         | string array | `[]`                                   | Per-module option collection for `memory`; same string-array limit as above.                                                                                                       | Live            |
+| `battery`        | string array | `[]`                                   | Per-module option collection for `battery`; same string-array limit as above.                                                                                                      | Live            |
 
 ```lua
 -- $XDG_CONFIG_HOME/bitty/plugins/bitty-terminal.bar.lua
 return {
   show = true,
   edge = "bottom",
-  show_single = false,
+  show_single = true,
   label = "index",
   icons = "ascii",
   modules_left = { "workspaces" },
@@ -172,15 +172,15 @@ workspace. Bind an argument-free control command such as `audio-toggle`,
 
 ## Troubleshooting
 
-| Symptom / error                          | Meaning                                                                                                                                                                                                                          | What to do                                                                                                                                                         |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `E_INCOMPATIBLE`                         | The host application or Plugin API version is outside `[compat]`; activation is disabled with no partial mount.                                                                                                                  | Upgrade Bitty or install a bar revision whose ranges admit your host. Do not edit the manifest ranges.                                                             |
-| `E_SETTINGS_UNDECLARED`                  | The entry point read a settings key absent from `[settings]`. This is a plugin defect.                                                                                                                                           | Every read key is declared; if it still appears, report it with `bitty plugin info bitty-terminal.bar` and run `bitty --safe` meanwhile.                           |
-| Capability denied                        | `E_CAPABILITY_DENIED` (class `runtime`): `ui.rich` hides the band, `workspace.read` empties it, `workspace.control` makes clicks no-ops, `ui.overlay` drops only the hover tooltip, `platform.notify` drops the detail fallback. | Reinstall and approve the grants, or inspect granted versus requested capabilities with `bitty plugin list`. A missing sensor/device grant only hides that module. |
-| Control click notifies instead of acting | The control head is ungranted or the call was denied (`E_NOT_PERMITTED`); the click degrades to one notification by design.                                                                                                      | Grant the matching `*.control` capability at install/consent time, or keep the read-only render.                                                                   |
-| Bar is missing                           | `show = false`, a lone workspace with `show_single = false` and no occupied scratchpad, or lazy activation before the first workspace event.                                                                                     | Check the settings file and `bitty plugin list`; open or focus a workspace to trigger the first render.                                                            |
-| Two bars                                 | Core still draws `workspace.show_bar` while the plugin paints its band.                                                                                                                                                          | Set `workspace.show_bar = false` in the main configuration.                                                                                                        |
-| `E_SPAWN_FAILED`                         | Not applicable: this plugin spawns no process and opens no socket.                                                                                                                                                               | —                                                                                                                                                                  |
+| Symptom / error                          | Meaning                                                                                                                                                                                                                          | What to do                                                                                                                                                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E_INCOMPATIBLE`                         | The host application or Plugin API version is outside `[compat]`; activation is disabled with no partial mount.                                                                                                                  | Upgrade Bitty or install a bar revision whose ranges admit your host. Do not edit the manifest ranges.                                                                                  |
+| `E_SETTINGS_UNDECLARED`                  | The entry point read a settings key absent from `[settings]`. This is a plugin defect.                                                                                                                                           | Every read key is declared; if it still appears, report it with `bitty plugin info bitty-terminal.bar` and run `bitty --safe` meanwhile.                                                |
+| Capability denied                        | `E_CAPABILITY_DENIED` (class `runtime`): `ui.rich` hides the band, `workspace.read` empties it, `workspace.control` makes clicks no-ops, `ui.overlay` drops only the hover tooltip, `platform.notify` drops the detail fallback. | Reinstall and approve the grants, or inspect granted versus requested capabilities with `bitty plugin list`. A missing sensor/device grant only hides that module.                      |
+| Control click notifies instead of acting | The control head is ungranted or the call was denied (`E_NOT_PERMITTED`); the click degrades to one notification by design.                                                                                                      | Grant the matching `*.control` capability at install/consent time, or keep the read-only render.                                                                                        |
+| Bar is missing                           | `show = false`, a lone workspace with `show_single = false` and no occupied scratchpad, or lazy activation before the first workspace event.                                                                                     | Check the settings file and `bitty plugin list`; `show_single` defaults to `true`, so a fresh install paints with one workspace. Open or focus a workspace to trigger the first render. |
+| Two bars                                 | Core still draws `workspace.show_bar` while the plugin paints its band.                                                                                                                                                          | Set `workspace.show_bar = false` in the main configuration.                                                                                                                             |
+| `E_SPAWN_FAILED`                         | Not applicable: this plugin spawns no process and opens no socket.                                                                                                                                                               | —                                                                                                                                                                                       |
 
 ## Workspace bar
 
@@ -206,7 +206,9 @@ workspace. Bind an argument-free control command such as `audio-toggle`,
   never blank. Complete capsules are retained in stable numeric id order and
   the line is bounded to 1024 UTF-8 bytes. A capsule remains one styled `Text`
   atom, preserving its complete click target.
-- A lone workspace hides the bar unless `show_single = true`.
+- A lone workspace shows the bar by default (`show_single = true`); set
+  `show_single = false` to restore the historical auto-hide on a lone
+  workspace. `show = false` remains the explicit way to turn the bar off.
 - Every capsule carries the `workspace.<id>` item region. Left runs
   `bitty-terminal.bar:workspace-action { id }`, which queues
   `bitty.workspace.focus(id)` by stable id; the active capsule is a no-op on
@@ -549,8 +551,9 @@ With `icons = "ascii"`, battery icons are five ASCII buckets by capacity
 the same glyph as the top ladder rung, not a separate glyph. Only a
 discharging battery alarms on low capacity; `full`, `charging`, `plugged`,
 and `unknown` render the icon with the default presentation. Bar visibility
-stays workspace-driven (a lone workspace still hides the bar unless
-`show_single` is set); sensor-only plans inherit that rule.
+stays workspace-driven (a lone workspace shows the bar by default;
+`show_single = false` restores the historical auto-hide); sensor-only plans
+inherit that rule.
 
 **Activation (landed, CTX-1226).** The manifest declares `[services.required]`
 for `system.cpu`/`system.memory`/`system.battery` at `^1.0` (plus the device
@@ -600,8 +603,9 @@ scratchpad segment.
   `workspace.changed` on a put/take flip, which the bar already re-renders
   from.
 - An occupied slot forces the bar visible even with a lone workspace; an
-  empty slot keeps the Core hide-lone behavior. `show = false` still hides
-  everything.
+  empty slot hides a lone workspace only under the explicit
+  `show_single = false` opt-out (the default keeps the bar visible).
+  `show = false` still hides everything.
 - Hosts without the CTX-0954 surface omit both fields, so the bar renders
   without the indicator (fail closed).
 
@@ -656,7 +660,8 @@ Gaps in the current host and provider set, not in this plugin:
   instead of reflowing the grid the way the Core band did.
 - An empty (hidden) band still takes a stacking index on its edge.
 - Activation is lazy: the plugin activates on its first declared event or
-  command, so `show_single = true` takes effect after the first workspace event.
+  command, so the default lone-workspace bar appears after the first workspace
+  event; `show_single = false` keeps it hidden until a second workspace exists.
 - While Core still draws its own workspaceline, set `workspace.show_bar = false`
   to avoid two bars.
 
