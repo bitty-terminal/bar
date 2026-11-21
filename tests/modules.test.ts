@@ -377,6 +377,12 @@ describe("no new Core API (grep the bridge surface)", () => {
       return comment === -1 ? line : line.slice(0, comment);
     })
     .join("\n");
+  // The pinned SDK list predates the shipped read-only constructor table
+  // (`bitty.ui.catalog`, bitty #3288) the same way it predates the overlay
+  // hosting surface the harness stands in for. The accepted set here is the
+  // pinned list plus exactly that one table -- additive only, every other
+  // call must still come from the SDK contract.
+  const acceptedSurface = [...V1_SURFACE_FUNCTIONS, "ui.catalog"];
   const calls = [
     ...new Set(
       [...code.matchAll(/bitty\.([a-z_]+)\.([a-z_]+)/g)].map(
@@ -388,8 +394,16 @@ describe("no new Core API (grep the bridge surface)", () => {
   test("every bitty.<ns>.<fn> call is an accepted v1 surface function", () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
-      expect(V1_SURFACE_FUNCTIONS).toContain(call);
+      expect(acceptedSurface).toContain(call);
     }
+  });
+
+  test("the one post-SDK surface is the catalog constructor table", () => {
+    // Discriminating guard: reverting the adoption must not silently shrink
+    // the accepted set, and adopting anything further must extend it
+    // explicitly here rather than ride along.
+    expect(acceptedSurface).toEqual([...V1_SURFACE_FUNCTIONS, "ui.catalog"]);
+    expect(calls).toContain("ui.catalog");
   });
 
   test("no process, exec, or load authority is used (clicks never shell out)", () => {

@@ -42,11 +42,15 @@
 -- The component-catalog dogfood (bitty#2114) composes the band, the
 -- workspaces pill row, and the tooltip/detail fallback against the shipped
 -- extension component catalog (`crates/bitty-lua/src/ui_catalog.rs`, module
--- `ui_catalog`) through the local recipe projection in the "Extension
--- component catalog recipes" section below: the catalog owns the entry
--- shapes, the caps, and the region order, this file owns the presentation
--- (the padded capsule, the per-module decoration, and the four deltas the
--- recipes declare).
+-- `ui_catalog`): the tooltip/detail fallback through the shipped host
+-- constructor table `bitty.ui.catalog` (bitty #3288), and the band and pill
+-- row through the local recipe projection in the "Extension component
+-- catalog" section below, which the host recipes cannot express (the Core
+-- #2411 group anchors, deltas D1-D3, and the style-hooks residual
+-- bitty-terminal/bitty#2114): the catalog owns the entry shapes, the caps,
+-- and the region order, this file owns the presentation (the padded
+-- capsule, the per-module decoration, and the four deltas the recipes
+-- declare).
 
 local M = {}
 
@@ -168,25 +172,61 @@ M.DEFAULT_MODULE_PLAN = {
 M.MODULE_GAP = " "
 
 -- ---------------------------------------------------------------------------
--- Extension component catalog recipes (bitty#2114 dogfood)
+-- Extension component catalog (bitty#2114 dogfood)
 --
--- The shipped component catalog is API-level truth in bitty
--- `crates/bitty-lua/src/ui_catalog.rs` (module `ui_catalog`): five typed
--- descriptors composed only from the accepted v1 node set (`Text`, `Row`,
--- `Column`, `List`) with inclusive caps. Core exposes no Lua-visible surface
--- for it yet, so this section is the plugin half of the dogfood: the bar
--- declares which entry it composes, bounds that declaration with the
--- catalog's caps, and emits the canonical node kinds through the
--- `M.catalog_*` builders instead of hand-assembling Row/Text tables at each
--- call site (`M.catalog_band_node` -> the band root, `M.catalog_pill_row` ->
--- the workspaces pill row, `M.catalog_detail_node`/
--- `M.catalog_detail_binding` -> the tooltip/detail fallback).
+-- API-level truth is bitty `crates/bitty-lua/src/ui_catalog.rs` (module
+-- `ui_catalog`): five typed descriptors composed only from the accepted v1
+-- node set (`Text`, `Row`, `Column`, `List`) with inclusive caps. The host
+-- exposes it to plugins as the read-only `bitty.ui.catalog` constructor
+-- table (bitty #3288, landed 16be2eef; bitty#2114 item 3): five pure
+-- constructors -- `band`, `pill_row`, `tooltip_detail_fallback`,
+-- `modal_sheet`, `status_strip` -- each marshalling one descriptor table,
+-- validating and composing it through the shipped module, and lowering the
+-- composed tree back into the accepted v1 node-table vocabulary for the
+-- unchanged `bitty.ui.mount` path.
 --
--- This is a projection, never a second source of truth: no entry, spelling,
--- or cap is invented here. Every constant below names the `ui_catalog`
--- constant it mirrors, `tests/catalog.test.ts` pins the mirrored values in one
--- place, and the shipped module stays authoritative -- extend `ui_catalog`,
--- never this table.
+-- The bar adopts that surface where it can reproduce shipped output, and
+-- composes locally only where the host recipes cannot express shipped
+-- behaviour:
+--
+--   * `tooltip-detail-fallback` (ADOPTED): `M.catalog_detail_node` composes
+--     the overlay body through `bitty.ui.catalog.tooltip_detail_fallback`
+--     whenever the host serves the table and the detail is inside the
+--     catalog's caps, so the host itself validates and lowers the leaf. Two
+--     cases fall back to the identical one-line local `Text` leaf: a host
+--     below the surface (the `>=0.0.24` compat floor predates it, so the
+--     lookup is feature-detected, never assumed) and a detail inside the
+--     bar's own 256-byte overlay bound but past the catalog's 128-byte
+--     `detail_bytes` cap (the host refuses that declaration; a measured D4
+--     finding, never a cut).
+--   * `band` (LOCAL, blocked): the host `band` lowering emits anchor-less
+--     region `Row`s, always all three regions, joined by separator leaves.
+--     The bar's shipped band places each group by a Core #2411 `anchor`,
+--     omits a provider-less group (D1), and emits no inter-region pad (D2).
+--     Anchored and styled nodes are outside the catalog's composed
+--     vocabulary (its lowering refuses them), and the style/placement hooks
+--     residual is blocked on the Scene Style Primitives acceptance
+--     (bitty-terminal/bitty#2114). `M.catalog_band_node` keeps the recipe's
+--     declaration shape -- three canonical regions, one `Text` leaf per
+--     segment, declaration order, fail-closed caps -- with those two
+--     declared deltas.
+--   * `pill-row` (LOCAL, blocked): the host `pill_row` lowering emits the
+--     bracket spelling `[label]` with no style and no binding. The bar's
+--     shipped pill is the padded capsule (` 1 `, bar#28) carrying the
+--     per-item palette and hit regions, so the spelling is a local
+--     composition declared here, never a host override. The recipe's shape
+--     stays the catalog's: one `Text` leaf per pill, single-space separators,
+--     declaration order, the pill-count and label-byte caps, and the
+--     reserved bracket delimiter refusal. Same blocked residual:
+--     bitty-terminal/bitty#2114.
+--   * `modal-sheet` and `status-strip` have no bar call site; they are
+--     mirrored below so the closed entry set stays pinned in one place.
+--
+-- The mirrored tables are a projection, never a second source of truth: no
+-- entry, spelling, or cap is invented here. Every constant below names the
+-- `ui_catalog` constant it mirrors, `tests/catalog.test.ts` pins the
+-- mirrored values in one place, and the shipped module stays authoritative
+-- -- extend `ui_catalog`, never this table.
 --
 -- Declared deltas (each is Core-owned behaviour the bar cannot adopt without
 -- changing shipped output; all four are pinned by tests):
@@ -198,14 +238,18 @@ M.MODULE_GAP = " "
 --      centering and right flush (Core #2411).
 --   D3 pill spelling: the bar's pill is a padded capsule (`" 1 "`), not a
 --      bracketed `[1]` (Core v1 has no corner-radius primitive, so the filled
---      padded capsule is the shipped form). The shape stays the catalog's: one
---      `Text` leaf per pill, single-space separators, declaration order.
---   D4 item-size caps: `segment_bytes`, `pill_label_bytes`, and `detail_bytes`
---      are measured, not enforced. The bar's own bounds (256 display cells per
---      module atom, 32 characters per workspace name, 256 bytes per detail)
---      are anchored to a different contract, so enforcing the catalog's would
---      cut shipped output. The composers report every overrun through their
---      `violations` list, so the gap stays measurable instead of invisible.
+--      padded capsule is the shipped form, bar#28). The shape stays the
+--      catalog's: one `Text` leaf per pill, single-space separators,
+--      declaration order.
+--   D4 measured item caps: `segment_bytes`, `pill_label_bytes`, and
+--      `detail_bytes` are measured in the composers and reported, never
+--      enforced. The bar's own bounds (256 display cells per module atom, 32
+--      characters per workspace name, 256 bytes per detail) are anchored to a
+--      different contract, so enforcing the catalog's would cut shipped
+--      output. Every finding is returned from the composer AND surfaced
+--      through `M.report_catalog_violations`, which the host wiring connects
+--      to the same bounded, deduplicated notify diagnostics the rejected
+--      settings use -- a reported diagnostic, never prose.
 -- ---------------------------------------------------------------------------
 
 -- Closed entry set in canonical declaration order (`CatalogEntry::ALL`). Ids
@@ -242,11 +286,16 @@ M.CATALOG_ANCHORS = { "left", "center", "right" }
 -- emits anything else.
 M.CATALOG_NODE_KINDS = { Text = true, Row = true, Column = true, List = true }
 
--- Canonical pill spelling (`PILL_OPEN`/`PILL_CLOSE`). `M.CATALOG_PILL_SPELLING`
--- is the bar's override (delta D3): the capsule padding instead of brackets.
+-- Canonical bracket spelling (`PILL_OPEN`/`PILL_CLOSE`): the delimiters the
+-- host `pill_row` recipe renders around a label and refuses inside one. The
+-- bar's own pill never uses them -- its spelling is the bar#28 padded
+-- capsule (delta D3), a local composition the host recipe cannot express
+-- (bracket spelling, no style hooks yet, blocked on
+-- bitty-terminal/bitty#2114) -- so they serve here only as the
+-- reserved-delimiter check, keeping the local composer faithful to the
+-- catalog's validation.
 M.CATALOG_PILL_OPEN = "["
 M.CATALOG_PILL_CLOSE = "]"
-M.CATALOG_PILL_SPELLING = { open = M.CAPSULE_PAD, close = M.CAPSULE_PAD }
 
 -- Canonical entry id for `name`, or nil when it is outside the closed set.
 function M.catalog_entry(name)
@@ -278,6 +327,69 @@ local function catalog_violation(entry, reason, index, length, cap)
     len = length,
     cap = cap,
   }
+end
+
+-- Diagnostic body for one finding: exactly the host `CatalogError` message
+-- the same breach would raise under host-side enforcement, prefixed and
+-- suffixed like every other bar diagnostic, so a surfaced report says what
+-- the catalog would refuse and why, and that the bar kept its own bound.
+-- Bounded: the entry and reason come from closed sets, the numbers from the
+-- caps, so the body cannot grow with user input.
+M.CATALOG_DIAGNOSTIC_PREFIX = "Unified Bar: catalog cap exceeded: "
+M.CATALOG_DIAGNOSTIC_SUFFIX = "; measured, not enforced (the bar keeps its own bound)."
+M.CATALOG_DIAGNOSTIC_MAX_FINDINGS = 16
+
+function M.catalog_violation_body(finding)
+  if type(finding) ~= "table" then
+    return nil
+  end
+  local entry = finding.entry
+  local reason = finding.reason
+  if type(entry) ~= "string" or type(reason) ~= "string" then
+    return nil
+  end
+  local index = finding.index or 0
+  local length = finding.len or 0
+  local cap = finding.cap or 0
+  local text = nil
+  if reason == "EmptyBlock" then
+    text = entry .. " block has no content"
+  elseif reason == "EmptyItem" then
+    text = entry .. " item " .. index .. " is empty"
+  elseif reason == "TooManyItems" then
+    text = entry .. " has " .. length .. " items, exceeding cap " .. cap
+  elseif reason == "ItemTooLong" then
+    text = entry .. " item " .. index .. " is " .. length .. " bytes, exceeding cap " .. cap
+  elseif reason == "ReservedDelimiter" then
+    text = entry .. " pill " .. index .. " contains a reserved bracket delimiter"
+  end
+  if text == nil then
+    return nil
+  end
+  return M.CATALOG_DIAGNOSTIC_PREFIX .. text .. M.CATALOG_DIAGNOSTIC_SUFFIX
+end
+
+-- Diagnostics sink for measured catalog findings. The pure default drops
+-- every finding; the host wiring below replaces it with the bounded,
+-- deduplicated notify reporter, so the composers stay pure for standalone
+-- callers (a hostless `dofile` of this module) and never notify on their own.
+M.on_catalog_violations = function()
+end
+
+-- Forwards one composer's measured findings to the sink. A nil or non-table
+-- list (a fail-closed reason string from a refused declaration) is ignored:
+-- only measured findings are diagnostics; a refusal already painted nothing.
+function M.report_catalog_violations(violations)
+  if type(violations) ~= "table" then
+    return
+  end
+  local sink = M.on_catalog_violations
+  if type(sink) ~= "function" then
+    return
+  end
+  for index = 1, #violations do
+    sink(violations[index])
+  end
 end
 
 -- Iterative scene bounds (`check_scene_bounds`): node count, nesting depth,
@@ -350,32 +462,27 @@ function M.catalog_leaves(atoms)
   return leaves
 end
 
--- `pill-row` recipe: the module-level pill disclosure. One `Text` leaf per
--- pill spelled `open .. label .. close`, joined by a single-space separator,
+-- `pill-row` recipe (LOCAL composition, declared): the module-level pill
+-- disclosure. One `Text` leaf per pill, joined by a single-space separator,
 -- in declaration order, with `active` carried as redundant emphasis on the
--- caller's leaf (never the only state carrier).
+-- caller's leaf (never the only state carrier). The recipe's validation and
+-- shape are the catalog's; the SPELLING is the bar's shipped padded capsule
+-- (bar#28, delta D3), which the host `pill_row` recipe cannot express -- it
+-- renders the bracket spelling `[label]` and carries no style (no style
+-- hooks yet, blocked on the Scene Style Primitives acceptance,
+-- bitty-terminal/bitty#2114) -- so this is a local declaration, never a
+-- host override.
 --
--- `pills` is a plain array of `{ label, active?, ... }`; `spelling` overrides
--- the brackets (`{ open = ..., close = ... }`). Returns the ordered
--- declaration items -- `{ text = <spelled label>, pill = <index> }` for a pill,
--- `{ text = " ", separator = true }` for a separator -- plus the violation
--- list, or nil plus an `EmptyBlock` finding when there is no pill: the catalog
--- rejects an empty declaration, so the caller paints its own placeholder
--- instead of an empty row (residual R6).
-function M.catalog_pill_row(pills, spelling)
+-- `pills` is a plain array of `{ label, active?, ... }`. Returns the ordered
+-- declaration items -- `{ text = <spelled label>, pill = <index> }` for a
+-- pill, `{ text = " ", separator = true }` for a separator -- plus the
+-- measured finding list, or nil plus an `EmptyBlock` finding when there is
+-- no pill: the catalog rejects an empty declaration, so the caller paints
+-- its own placeholder instead of an empty row (residual R6).
+function M.catalog_pill_row(pills)
   local entry = "pill-row"
   if type(pills) ~= "table" or #pills == 0 then
     return nil, { catalog_violation(entry, "EmptyBlock", 0, 0, 0) }
-  end
-  local open = M.CATALOG_PILL_OPEN
-  local close = M.CATALOG_PILL_CLOSE
-  if type(spelling) == "table" then
-    if type(spelling.open) == "string" then
-      open = spelling.open
-    end
-    if type(spelling.close) == "string" then
-      close = spelling.close
-    end
   end
   local violations = {}
   if #pills > M.CATALOG_CAPS.pills then
@@ -400,32 +507,45 @@ function M.catalog_pill_row(pills, spelling)
     if index > 1 then
       items[#items + 1] = { text = " ", separator = true }
     end
-    items[#items + 1] = { text = open .. label .. close, pill = index }
+    items[#items + 1] = { text = M.CAPSULE_PAD .. label .. M.CAPSULE_PAD, pill = index }
   end
   return items, violations
 end
 
--- `band` recipe: one plain `Row` root (no anchor, no style, no binding) whose
--- children are the declared regions in canonical order left -> center ->
--- right, each an anchored child `Row` (`M.catalog_region_node`). This is the
--- band's single composition site: `M.render_bar` hands it the regions it
--- painted and gets the whole scene back.
+-- `band` recipe (LOCAL composition, declared): one plain `Row` root (no
+-- anchor, no style, no binding) whose children are the declared regions in
+-- canonical order left -> center -> right, each an anchored child `Row`
+-- (`M.catalog_region_node`). This is the band's single composition site:
+-- `M.render_bar` hands it the regions it painted and gets the whole scene
+-- back. The host `band` recipe cannot express this tree -- its lowering emits
+-- anchor-less region rows, always all three regions, and inter-region
+-- separator leaves -- so the composition stays local with deltas D1/D2,
+-- blocked on the Scene Style Primitives acceptance
+-- (bitty-terminal/bitty#2114).
 --
 -- `regions` is an ordered array of `{ anchor, atoms, segments }` -- only the
 -- regions to paint (delta D1), the region's declaration-level atoms, and how
 -- many reaching segments (module contributions) they hold. Returns the root
--- node, or nil plus a reason when the declaration is outside the catalog: no
--- region, an anchor outside `M.CATALOG_ANCHORS`, a region repeated or out of
--- canonical order, more than `MAX_SEGMENTS` segments, or an aggregate cap
--- breach. A refused declaration paints nothing (fail closed), never a partial
--- surface.
+-- node plus the measured finding list, or nil plus a reason when the
+-- declaration is outside the catalog: no region, an anchor outside
+-- `M.CATALOG_ANCHORS`, a region repeated or out of canonical order, more
+-- than `MAX_SEGMENTS` segments, or an aggregate cap breach. A refused
+-- declaration paints nothing (fail closed), never a partial surface.
+--
+-- D4 `segment_bytes`: every leaf the region rows will paint is measured
+-- against the catalog's per-segment byte cap in declaration order, and each
+-- overrun becomes a finding -- measured and reported, never enforced,
+-- because the bar's own atom bound (256 display cells) is a different
+-- contract and enforcing the catalog's would cut shipped output.
 function M.catalog_band_node(regions)
   if type(regions) ~= "table" or #regions == 0 then
     return nil, "EmptyBlock"
   end
   local children = {}
+  local violations = {}
   local seen = {}
-  local segments = 0
+  local declared = 0
+  local painted = 0
   local cursor = 0
   for index = 1, #regions do
     local region = regions[index]
@@ -441,14 +561,28 @@ function M.catalog_band_node(regions)
     end
     cursor = position
     seen[anchor] = true
-    local row = M.catalog_region_node(anchor, M.catalog_leaves(region.atoms))
+    local leaves = M.catalog_leaves(region.atoms)
+    for leaf = 1, #leaves do
+      painted = painted + 1
+      local text = leaves[leaf].text
+      if type(text) == "string" and #text > M.CATALOG_CAPS.segment_bytes then
+        violations[#violations + 1] = catalog_violation(
+          "band",
+          "ItemTooLong",
+          painted,
+          #text,
+          M.CATALOG_CAPS.segment_bytes
+        )
+      end
+    end
+    local row = M.catalog_region_node(anchor, leaves)
     if row == nil then
       return nil, "EmptyBlock"
     end
     children[#children + 1] = row
-    segments = segments + (region.segments or 0)
+    declared = declared + (region.segments or 0)
   end
-  if segments > M.CATALOG_CAPS.segments then
+  if declared > M.CATALOG_CAPS.segments then
     return nil, "TooManyItems"
   end
   local node = { kind = "Row", children = children }
@@ -456,14 +590,27 @@ function M.catalog_band_node(regions)
   if bounds == nil then
     return nil, reason
   end
-  return node
+  return node, violations
 end
 
--- `tooltip-detail-fallback` recipe: one plain `Text` leaf carrying the bounded
--- detail line -- the overlay body the host presents when it has no richer
--- tooltip vehicle. Returns the node plus the violation list, or nil plus an
--- `EmptyBlock` finding for an empty detail (an empty declaration is rejected;
--- clearing the tooltip is not a declaration, see `show_tooltip`).
+-- `tooltip-detail-fallback` recipe (ADOPTED): the overlay body leaf -- one
+-- plain `Text` node with no style, no binding, no children -- the overlay
+-- body the host presents when it has no richer tooltip vehicle. On a host
+-- that serves the shipped constructor table (`bitty.ui.catalog`, bitty
+-- #3288), the leaf is composed by
+-- `bitty.ui.catalog.tooltip_detail_fallback` itself, so the host validates
+-- the declaration and lowers the very node the bar mounts. Two cases compose
+-- the identical one-line leaf locally: a host without the table (the
+-- `>=0.0.24` compat floor predates the surface, so the lookup is
+-- feature-detected, never assumed) and a detail inside the bar's own
+-- 256-byte overlay bound (`M.HOVER_DETAIL_MAX_BYTES`) but past the
+-- catalog's 128-byte `detail_bytes` cap -- the host refuses that
+-- declaration, and cutting it would change shipped output, so it paints in
+-- full as a measured D4 finding.
+--
+-- Returns the node plus the measured finding list, or nil plus an
+-- `EmptyBlock` finding for an empty detail (an empty declaration is
+-- rejected; clearing the tooltip is not a declaration, see `show_tooltip`).
 function M.catalog_detail_node(text)
   local entry = "tooltip-detail-fallback"
   if type(text) ~= "string" or text == "" then
@@ -473,6 +620,13 @@ function M.catalog_detail_node(text)
   if #text > M.CATALOG_CAPS.detail_bytes then
     violations[1] =
       catalog_violation(entry, "ItemTooLong", 0, #text, M.CATALOG_CAPS.detail_bytes)
+  end
+  local catalog = bitty ~= nil and bitty.ui ~= nil and bitty.ui.catalog or nil
+  if catalog ~= nil and type(catalog.tooltip_detail_fallback) == "function" then
+    local ok, node = pcall(catalog.tooltip_detail_fallback, { text = text })
+    if ok and type(node) == "table" and node.kind == "Text" then
+      return node, violations
+    end
   end
   return { kind = "Text", text = text }, violations
 end
@@ -2287,7 +2441,11 @@ function M.segments(rows, opts, options)
     }
   end
   local out = {}
-  local items = M.catalog_pill_row(pills, M.CATALOG_PILL_SPELLING)
+  local items, violations = M.catalog_pill_row(pills)
+  -- Measured D4 findings leave the composer here: the pill row still paints
+  -- every capsule in full, and each distinct overrun reports once through
+  -- the diagnostics sink (a no-op until the host wiring installs it).
+  M.report_catalog_violations(violations)
   if items ~= nil then
     for _, item in ipairs(items) do
       if item.separator then
@@ -4837,10 +4995,14 @@ function M.render_bar(opts, rows, now)
       }
     end
   end
-  local component = M.catalog_band_node(regions)
+  local component, violations = M.catalog_band_node(regions)
   if component == nil then
     return { component = HIDDEN, details = {}, visible = false }
   end
+  -- Measured D4 findings (`segment_bytes`) leave the composer here: the band
+  -- still paints every group in full, and each distinct over-cap atom
+  -- reports once through the diagnostics sink.
+  M.report_catalog_violations(violations)
   return { component = component, details = details, visible = true }
 end
 
@@ -5061,6 +5223,33 @@ local function report_diagnostics(settings)
   report_setting_diagnostic("option", settings.option_diagnostic)
 end
 
+-- Measured catalog-cap findings (D4, bitty#2114 dogfood) surface through the
+-- same bounded, deduplicated notify diagnostics the rejected settings use:
+-- the composers keep painting the bar's own bounds, and each distinct
+-- `CatalogError` spelling reports once per generation, so a per-tick render
+-- storm cannot spam the notify surface or grow the dedup state. The count
+-- bound keeps a hostile churn of distinct findings from growing either; past
+-- it, findings stay in the composers' returned lists only. An absent or
+-- ungranted `platform.notify` never breaks rendering: the report is
+-- best-effort, exactly like `report_setting_diagnostic`.
+local reported_catalog_findings = {}
+local reported_catalog_count = 0
+M.on_catalog_violations = function(finding)
+  local body = M.catalog_violation_body(finding)
+  if body == nil or reported_catalog_findings[body] then
+    return
+  end
+  if reported_catalog_count >= M.CATALOG_DIAGNOSTIC_MAX_FINDINGS then
+    return
+  end
+  reported_catalog_findings[body] = true
+  reported_catalog_count = reported_catalog_count + 1
+  if bitty.notify == nil or bitty.notify.show == nil then
+    return
+  end
+  pcall(bitty.notify.show, { title = M.TOOLTIP_TITLE, body = body })
+end
+
 local opts = M.read_settings(settings_get)
 report_diagnostics(opts)
 local timers = {}
@@ -5092,12 +5281,17 @@ local function show_tooltip(text)
   if overlay_block == nil then
     return false
   end
-  local node = M.catalog_detail_node(text)
+  local node, violations = M.catalog_detail_node(text)
   if node == nil then
     -- Clearing the tooltip is not a declaration: the catalog rejects an empty
     -- block, so the clear keeps the one plain `Text` leaf shape with no text
     -- instead of claiming a `tooltip-detail-fallback` entry.
     node = { kind = "Text", text = "" }
+  else
+    -- Measured D4 findings (`detail_bytes`) leave the composer here: an
+    -- over-cap detail still paints in full and reports once through the
+    -- diagnostics sink.
+    M.report_catalog_violations(violations)
   end
   local ok, updated = pcall(bitty.ui.update, overlay_block, node)
   if ok and updated == true then

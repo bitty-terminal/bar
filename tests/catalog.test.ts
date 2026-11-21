@@ -3,17 +3,23 @@
  * fallback against the shipped extension component catalog.
  *
  * API-level truth is bitty `crates/bitty-lua/src/ui_catalog.rs` (module
- * `ui_catalog`): five typed descriptors built only from the accepted v1 node
- * set (`Text`/`Row`/`Column`/`List`) with inclusive caps. Core exposes no
- * Lua-visible surface for it, so the bar projects the entries it composes
- * (`lua/bar/init.lua`, section "Extension component catalog recipes") and the
- * assertions below pin the contract at the only place a host sees it: the
- * composed scene plus the mirrored cap table.
+ * `ui_catalog`): five typed descriptors built only from the accepted v1
+ * node set (`Text`/`Row`/`Column`/`List`) with inclusive caps. The host
+ * exposes it as the read-only `bitty.ui.catalog` constructor table
+ * (bitty #3288), which the harness below mirrors shape for shape. The
+ * tooltip/detail fallback composes through the host constructor itself
+ * (`lua/bar/init.lua`, section "Extension component catalog"); the band and
+ * pill row compose locally with declared blocked residuals (the Core #2411
+ * anchors and deltas D1-D3; the style hooks are blocked on
+ * bitty-terminal/bitty#2114), and the assertions below pin the contract at
+ * the only place a host sees it: the composed scene, the host constructor
+ * calls, the surfaced diagnostics, and the mirrored cap table.
  *
  * Each test names the catalog rule it pins. The four declared deltas the bar
  * cannot adopt without changing shipped output (omission of a provider-less
- * region, no inter-region pad, the padded capsule pill spelling, and the three
- * measured-not-enforced item caps) are pinned as behaviour, not asserted away.
+ * region, no inter-region pad, the padded capsule pill spelling, and the
+ * three measured-not-enforced item caps) are pinned as behaviour, not
+ * asserted away.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -509,6 +515,190 @@ describe("tooltip-detail-fallback recipe (bitty#2114 C-3 rungs 1-2)", () => {
   });
 });
 
+describe("host-surface adoption (bitty.ui.catalog, bitty #3288)", () => {
+  /**
+   * The harness mirrors the shipped read-only constructor table, so an
+   * in-cap detail must be composed by the HOST constructor, not by the
+   * plugin's fallback: `catalogCalls` names every attempted call. A revert
+   * to always-local composition empties the list and fails here.
+   */
+  test("the overlay body is composed by the host constructor", async () => {
+    const run = await bar({
+      workspaces: THREE,
+      settings: {
+        modules_left: ["workspaces"],
+        modules_center: ["clock"],
+        modules_right: [],
+      },
+      fakeNow: 1700000000,
+    });
+    const clock = bandShape(run.component()).regions[1]!.leaves[0]!;
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: clock.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.catalogCalls()).toEqual(["tooltip_detail_fallback"]);
+    const overlay = run.overlay();
+    expect(overlay?.kind).toBe("Text");
+    expect(fieldsOf(overlay!)).toEqual([]);
+    expect(run.overlayText()).not.toBe("");
+  });
+
+  /**
+   * The over-cap tail: the host constructor refuses a detail past
+   * `CATALOG_MAX_DETAIL_BYTES` (128), and the plugin composes the identical
+   * leaf locally rather than cutting the detail to the catalog cap. The
+   * attempt is still recorded, so this pair discriminates "host composed"
+   * from "host refused, local fallback painted".
+   */
+  test("an over-cap detail is refused by the host and painted locally", async () => {
+    const windows = Array.from(
+      { length: 6 },
+      (_, index) => `window-${index}-${"d".repeat(20)}`,
+    );
+    const run = await bar({
+      workspaces: [{ ...ws(1, "dev", false, 6), windows } as WorkspaceInfo],
+      settings: { show_single: true, modules_center: [], modules_right: [] },
+    });
+    const capsule = bandShape(run.component()).regions[0]!.leaves[0]!;
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: capsule.on_hover!.region!.id,
+      phase: "enter",
+    });
+    expect(run.catalogCalls()).toEqual(["tooltip_detail_fallback"]);
+    const text = run.overlayText();
+    expect(bytes(text)).toBeGreaterThan(128);
+    expect(bytes(text)).toBeLessThanOrEqual(BAR_BOUNDS.detailBytes);
+    expect(run.overlay()?.text).toBe(text);
+  });
+
+  /**
+   * Compat: the manifest's 0.0.24 floor predates the surface, so a host
+   * without the table must still paint the identical leaf. Dropping the
+   * feature-detect (assuming the surface) would crash on these hosts.
+   */
+  test("a host without the catalog surface composes the identical leaf locally", async () => {
+    const options = {
+      workspaces: THREE,
+      settings: {
+        modules_left: ["workspaces"],
+        modules_center: ["clock"],
+        modules_right: [],
+      },
+      fakeNow: 1700000000,
+    } as const;
+    const hosted = await bar({ ...options });
+    const legacy = await bar({ ...options, withoutCatalog: true });
+
+    const clock = (run: BarRun): string =>
+      bandShape(run.component()).regions[1]!.leaves[0]!.on_hover!.region!.id;
+    hosted.host.dispatchCommand(HOVER_COMMAND, {
+      region: clock(hosted),
+      phase: "enter",
+    });
+    legacy.host.dispatchCommand(HOVER_COMMAND, {
+      region: clock(legacy),
+      phase: "enter",
+    });
+    expect(hosted.catalogCalls()).toEqual(["tooltip_detail_fallback"]);
+    expect(legacy.catalogCalls()).toEqual([]);
+    expect(legacy.overlayText()).toBe(hosted.overlayText());
+    expect(legacy.overlay()?.kind).toBe("Text");
+    expect(fieldsOf(legacy.overlay()!)).toEqual([]);
+  });
+});
+
+describe("measured caps surface as bounded diagnostics (D4)", () => {
+  /**
+   * D4 `segment_bytes` is measured, not asserted in prose: a pill whose
+   * label is inside the bar's 32-character bound but past the catalog's
+   * 32-BYTE pill cap is also past the catalog's 64-byte segment cap once
+   * spelled, and both findings leave their composers as one deduplicated
+   * notify diagnostic each, in render order (pill row inside `render_plan`,
+   * band root after it). The bar still paints every character.
+   */
+  test("an over-cap pill label and segment each report once, and still paint", async () => {
+    const name = "界".repeat(BAR_BOUNDS.nameChars);
+    const run = await bar({
+      workspaces: [ws(1, name)],
+      settings: {
+        label: "name",
+        show_single: true,
+        modules_center: [],
+        modules_right: [],
+      },
+    });
+    expect(run.catalogCalls()).toEqual([]);
+    const pill = bandShape(run.component()).regions[0]!.leaves[0]!;
+    expect(pill.text).toBe(` ${name} `);
+    expect(run.host.notifications.map((entry) => entry.body)).toEqual([
+      "Unified Bar: catalog cap exceeded: pill-row item 1 is 96 bytes, exceeding cap 32; measured, not enforced (the bar keeps its own bound).",
+      "Unified Bar: catalog cap exceeded: band item 1 is 98 bytes, exceeding cap 64; measured, not enforced (the bar keeps its own bound).",
+    ]);
+  });
+
+  /**
+   * D4 `detail_bytes` on the adopted path: the host refuses the over-cap
+   * declaration, the local fallback paints it in full, and the refusal is
+   * surfaced once as the host's own `CatalogError` spelling. The tooltip
+   * itself never breaks.
+   */
+  test("an over-cap detail reports once and the tooltip still paints", async () => {
+    const windows = Array.from(
+      { length: 6 },
+      (_, index) => `window-${index}-${"d".repeat(20)}`,
+    );
+    const run = await bar({
+      workspaces: [{ ...ws(1, "dev", false, 6), windows } as WorkspaceInfo],
+      settings: { show_single: true, modules_center: [], modules_right: [] },
+    });
+    const capsule = bandShape(run.component()).regions[0]!.leaves[0]!;
+    run.host.dispatchCommand(HOVER_COMMAND, {
+      region: capsule.on_hover!.region!.id,
+      phase: "enter",
+    });
+    const text = run.overlayText();
+    expect(bytes(text)).toBeGreaterThan(128);
+    expect(run.host.notifications.map((entry) => entry.body)).toEqual([
+      `Unified Bar: catalog cap exceeded: tooltip-detail-fallback item 0 is ${bytes(text)} bytes, exceeding cap 128; measured, not enforced (the bar keeps its own bound).`,
+    ]);
+  });
+
+  /**
+   * The diagnostics are deduplicated per distinct finding: a full re-render
+   * of the same over-cap declaration reports once, never once per tick, and
+   * an ungranted `platform.notify` keeps the bar painting (fail closed, the
+   * findings stay in the composers' returned lists only).
+   */
+  test("findings deduplicate across re-renders and never break the band", async () => {
+    const name = "界".repeat(BAR_BOUNDS.nameChars);
+    const run = await bar({
+      workspaces: [ws(1, name)],
+      settings: {
+        label: "name",
+        show_single: true,
+        modules_left: ["workspaces"],
+        modules_center: ["clock"],
+        modules_right: [],
+      },
+      grants: BAR_CAPABILITIES.filter(
+        (capability) => capability !== "platform.notify",
+      ),
+      fakeNow: 1700000000,
+    });
+    // The first render already measured both findings; the ungranted notify
+    // surface swallowed the report without breaking the band.
+    expect(bandShape(run.component()).problems).toEqual([]);
+    expect(run.host.notifications).toEqual([]);
+    // The clock tick re-renders the same over-cap declaration: the sink
+    // deduplicates, so no second report, and the band still paints in full.
+    run.host.advanceTimers(60000);
+    expect(bandShape(run.component()).problems).toEqual([]);
+    expect(run.host.notifications).toEqual([]);
+    expect(run.host.handlerViolations).toEqual([]);
+  });
+});
+
 describe("the recipes are the composition sites", () => {
   /**
    * These pin the call graph, not just the shape: reverting to the inline
@@ -525,10 +715,18 @@ describe("the recipes are the composition sites", () => {
 
   test("the pill row comes from M.catalog_pill_row", () => {
     const body = sourceSlice("function M.segments(", "\nend\n");
-    expect(body).toContain(
-      "M.catalog_pill_row(pills, M.CATALOG_PILL_SPELLING)",
-    );
+    expect(body).toContain("M.catalog_pill_row(pills)");
     expect(body).not.toContain("M.CAPSULE_PAD .. label");
+  });
+
+  test("the invented pill spelling override is gone", () => {
+    // The host `pill_row` descriptor accepts only `pills`
+    // (`reject_unknown_keys` in `pill_row_from_lua_value`); the padded
+    // capsule is a declared LOCAL spelling (bar#28, delta D3) inside the
+    // local composer, never a host-facing override field. A reintroduced
+    // `spelling` parameter would recreate surface the host fails closed on.
+    expect(ENTRY_SOURCE).not.toContain("CATALOG_PILL_SPELLING");
+    expect(ENTRY_SOURCE).not.toContain("function M.catalog_pill_row(pills,");
   });
 
   test("the tooltip and detail fallback come from the detail recipe", () => {
@@ -537,6 +735,22 @@ describe("the recipes are the composition sites", () => {
     );
     expect(sourceSlice("function M.atom_node(", "\nend\n")).toContain(
       "M.catalog_detail_binding(atom.tooltip, atom.region)",
+    );
+  });
+
+  test("the detail recipe composes through the host constructor", () => {
+    // The adopted surface: the read-only constructor table bitty #3288
+    // registers, feature-detected (`bitty.ui.catalog`) and pcall-guarded so
+    // a pre-surface host composes the identical leaf.
+    const body = sourceSlice("function M.catalog_detail_node(", "\nend\n");
+    expect(body).toContain("bitty.ui.catalog");
+    expect(body).toContain("tooltip_detail_fallback");
+    expect(body).toContain("pcall");
+    // The blocked residuals are declared where the local compositions live,
+    // pointing at the exact bitty-terminal/bitty#2114 acceptance.
+    expect(ENTRY_SOURCE).toContain("bitty-terminal/bitty#2114");
+    expect(ENTRY_SOURCE).not.toContain(
+      "Core exposes no Lua-visible surface for it yet",
     );
   });
 });
